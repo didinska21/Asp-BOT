@@ -93,34 +93,29 @@ function readProxiesFromFile(filename) {
 
 function getGlobalHeaders(url, refCode, extraHeaders = {}) {
   const ua = new UserAgent();
+  const timestamp = Math.floor(Date.now() / 1000);
+  
   const headers = {
-    'accept': '*/*',
-    'accept-encoding': 'gzip, deflate, br',
-    'accept-language': 'en-US,en;q=0.9',
+    'accept': 'application/json, text/plain, */*',
+    'accept-encoding': 'gzip, deflate, br, zstd',
+    'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
     'cache-control': 'no-cache',
     'content-type': 'application/json',
-    'origin': 'https://dashboard.allscale.io',
+    'origin': 'https://app.allscale.io',
     'pragma': 'no-cache',
     'priority': 'u=1, i',
-    'referer': `https://dashboard.allscale.io/signup?refCode=${refCode}`,
-    'sec-ch-ua': '"Chromium";v="130", "Not?A_Brand";v="99"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
+    'referer': 'https://app.allscale.io/pay/register',
+    'sec-ch-ua': '"Chromium";v="141", "Not?A_Brand";v="8"',
+    'sec-ch-ua-mobile': '?1',
+    'sec-ch-ua-platform': '"Android"',
     'sec-fetch-dest': 'empty',
     'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'same-site',
+    'sec-fetch-site': 'same-origin',
+    'secret-key': '23ca077460285e058d3b84ae682b683bcec5b9b23e940ea60e5b8f73a9cb3eb',
+    'timestamp': timestamp.toString(),
+    'x-system-timestamp': timestamp.toString(),
     'user-agent': ua.toString()
   };
-
-  // DISABLED: Timestamp dan signature mungkin menyebabkan Auth error
-  // if (url.includes('/api/')) {
-  //   const timestamp = Math.floor(Date.now() / 1000);
-  //   const signature = crypto.createHash('sha256')
-  //     .update('vT*IUEGgyL' + timestamp)
-  //     .digest('hex');
-  //   headers['x-timestamp'] = timestamp;
-  //   headers['x-signature'] = signature;
-  // }
 
   return Object.assign(headers, extraHeaders);
 }
@@ -326,50 +321,39 @@ async function checkInbox(provider, axiosInstance, emailData, maxAttempts = 15, 
 // === NEW OTP-BASED REGISTRATION ===
 
 async function sendOTPCode(axiosInstance, email, refCode) {
-  // Endpoint yang lebih mungkin berdasarkan DevTools screenshot
-  const endpoints = [
-    { url: 'https://app.allscale.io/pay/register/send_email_otp', data: { email, referrer_id: refCode } },
-    { url: 'https://app.allscale.io/api/send_email_otp', data: { email, referrer_id: refCode } },
-    { url: 'https://dashboard.allscale.io/api/send_email_otp', data: { email, referrer_id: refCode } },
-    { url: 'https://app.allscale.io/send_email_otp', data: { email, referrer_id: refCode } },
-    { url: 'https://dashboard.allscale.io/pay/register/send_email_otp', data: { email, referrer_id: refCode } },
-    { url: 'https://dashboard.allscale.io/api/public/send/verification/mail', data: { email, referrer_id: refCode } },
-  ];
+  // Endpoint dan payload yang BENAR dari DevTools
+  const url = 'https://app.allscale.io/api/public/turnkey/send_email_otp';
+  const data = { 
+    email: email,
+    check_user_existence: false
+  };
   
-  console.log(`${YELLOW}Trying to send OTP...${RESET}`);
+  const headers = getGlobalHeaders(url, refCode);
+  const spinner = createSpinner('Sending OTP code...');
+  spinner.start();
   
-  for (let i = 0; i < endpoints.length; i++) {
-    const endpoint = endpoints[i];
-    const spinner = createSpinner(`Trying endpoint ${i + 1}/${endpoints.length}`);
-    spinner.start();
+  try {
+    const response = await axiosInstance.post(url, data, { headers });
     
-    try {
-      const headers = getGlobalHeaders(endpoint.url, refCode);
-      const response = await axiosInstance.post(endpoint.url, endpoint.data, { headers });
+    if (response.data.code === 0 || response.status === 200) {
+      spinner.succeed('OTP code sent successfully');
+      console.log(`${GREEN}Response: ${JSON.stringify(response.data)}${RESET}\n`);
       
-      if (response.data.code === 0 || response.status === 200 || response.status === 201) {
-        spinner.succeed(`✓ OTP sent via: ${endpoint.url}`);
-        console.log(`${GREEN}Response: ${JSON.stringify(response.data)}${RESET}\n`);
-        return true;
-      } else {
-        spinner.fail(`Response code: ${response.data.code || response.status}`);
-        console.log(`${YELLOW}Response: ${JSON.stringify(response.data)}${RESET}\n`);
-      }
-    } catch (error) {
-      const status = error.response ? error.response.status : 'N/A';
-      const errorData = error.response ? JSON.stringify(error.response.data) : error.message;
-      spinner.fail(`${status} - ${errorData.substring(0, 100)}`);
+      // Return otp_id yang diperlukan untuk verify
+      return {
+        success: true,
+        otp_id: response.data.data?.otp_id || response.data.otp_id
+      };
+    } else {
+      throw new Error('Server error: ' + JSON.stringify(response.data));
     }
+  } catch (error) {
+    const errorMsg = error.response ? 
+      JSON.stringify(error.response.data) : 
+      error.message;
+    spinner.fail('Failed to send OTP: ' + errorMsg);
+    return { success: false };
   }
-  
-  console.log(`${RED}${BOLD}All endpoints failed. Please check the correct endpoint manually.${RESET}\n`);
-  console.log(`${CYAN}${BOLD}Instructions:${RESET}`);
-  console.log(`1. Click on 'send_email_otp' request in DevTools`);
-  console.log(`2. Check the full URL in Headers tab`);
-  console.log(`3. Check the Request Payload/Body`);
-  console.log(`4. Share the URL and payload format\n`);
-  
-  return false;
 }
 
 async function verifyOTPAndRegister(axiosInstance, email, otpCode, refCode, userAgent, ipAddress) {
@@ -426,10 +410,13 @@ async function doRegister(axiosInstance, refCode, accountPrefix) {
   console.log(`${GREEN}${BOLD}📧 Email: ${email}${RESET}`);
   
   // Send OTP
-  const otpSent = await sendOTPCode(axiosInstance, email, refCode);
-  if (!otpSent) {
+  const otpResult = await sendOTPCode(axiosInstance, email, refCode);
+  if (!otpResult.success) {
     return { success: false };
   }
+  
+  const otpId = otpResult.otp_id;
+  console.log(`${CYAN}OTP ID: ${otpId}${RESET}`);
   
   // Wait a bit before checking inbox
   const randomDelay = Math.floor(Math.random() * (10000 - 5000 + 1)) + 5000;
@@ -447,10 +434,9 @@ async function doRegister(axiosInstance, refCode, accountPrefix) {
   const result = await verifyOTPAndRegister(
     axiosInstance, 
     email, 
-    otpCode, 
-    refCode, 
-    userAgent, 
-    ipAddress
+    otpCode,
+    otpId,
+    refCode
   );
   
   if (!result.success) {
@@ -460,8 +446,8 @@ async function doRegister(axiosInstance, refCode, accountPrefix) {
   return {
     success: true,
     email: email,
-    token: result.data.token,
-    refresh_token: result.data.token
+    token: result.data.token || result.data.access_token,
+    refresh_token: result.data.refresh_token || result.data.token
   };
 }
 
