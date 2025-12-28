@@ -1,3 +1,29 @@
+/**
+ * ALLSCALE REGISTER – FINAL
+ * - Auto Xvfb (VPS safe)
+ * - Referral from config.json
+ * - Proxy choice by number
+ * - Real browser + stealth
+ */
+
+/// ===== AUTO XVFB (ANTI LUPA) =====
+if (!process.env.DISPLAY && !process.env.XVFB_RUN) {
+  const { spawn } = require("child_process");
+  console.log("⚠️ No DISPLAY detected, restarting with xvfb...");
+
+  spawn(
+    "xvfb-run",
+    ["-a", "node", process.argv[1]],
+    {
+      stdio: "inherit",
+      env: { ...process.env, XVFB_RUN: "1" }
+    }
+  );
+
+  process.exit(0);
+}
+
+/// ===== DEPENDENCIES =====
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const readline = require("readline-sync");
@@ -11,28 +37,28 @@ puppeteer.use(StealthPlugin());
 
 (async () => {
   try {
-    // ===== LOAD CONFIG =====
-    const config = JSON.parse(fs.readFileSync("config.json"));
-    const referral = config.referral_code;
+    /// ===== LOAD CONFIG =====
+    const config = JSON.parse(fs.readFileSync("config.json", "utf-8"));
+    const referral = config.referral_code || "";
 
-    let url = "https://app.allscale.io/pay/register";
-    if (referral) url += `?code=${referral}`;
+    let registerUrl = "https://app.allscale.io/pay/register";
+    if (referral) registerUrl += `?code=${referral}`;
 
-    // ===== PROXY MENU =====
+    /// ===== PROXY MENU =====
     console.log("\nPILIH PROXY:");
     console.log("1. Tanpa Proxy");
     console.log("2. Proxy Static");
     console.log("3. Proxy Rotating");
 
-    const choice = readline.question("Pilih (1/2/3): ");
+    const choice = readline.question("Pilih (1/2/3): ").trim();
 
     let proxy = null;
     if (choice === "2") proxy = loadProxy("static");
     if (choice === "3") proxy = loadProxy("rotating");
 
-    if (proxy) console.log("🌐 Proxy:", proxy);
-    else console.log("🌐 Proxy: NONE");
+    console.log("🌐 Proxy:", proxy || "NONE");
 
+    /// ===== BROWSER ARGS =====
     const args = [
       "--no-sandbox",
       "--disable-setuid-sandbox",
@@ -43,6 +69,7 @@ puppeteer.use(StealthPlugin());
 
     if (proxy) args.push(`--proxy-server=${proxy}`);
 
+    /// ===== LAUNCH BROWSER =====
     const browser = await puppeteer.launch({
       headless: false,
       defaultViewport: null,
@@ -51,7 +78,7 @@ puppeteer.use(StealthPlugin());
 
     const page = await browser.newPage();
 
-    // proxy auth
+    /// ===== PROXY AUTH (IF ANY) =====
     if (proxy && proxy.includes("@")) {
       const auth = proxy.split("//")[1].split("@")[0].split(":");
       await page.authenticate({
@@ -60,37 +87,40 @@ puppeteer.use(StealthPlugin());
       });
     }
 
-    // ===== TEMP EMAIL =====
+    /// ===== TEMP EMAIL =====
     const { email, login, domain } = await createTempEmail();
     console.log("📧 Temp Email:", email);
 
-    await page.goto(url, { waitUntil: "networkidle2" });
+    /// ===== OPEN REGISTER PAGE =====
+    await page.goto(registerUrl, { waitUntil: "networkidle2" });
 
-    // ===== FORM =====
-    await page.waitForSelector('input[type="email"]');
+    /// ===== FILL FORM =====
+    await page.waitForSelector('input[type="email"]', { timeout: 30000 });
     await page.type('input[type="email"]', email, { delay: 80 });
 
     const checkboxes = await page.$$('input[type="checkbox"]');
-    for (const cb of checkboxes) await cb.click();
+    for (const cb of checkboxes) {
+      await cb.click();
+    }
 
+    // klik "Create with email" (bukan passkey)
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll("button")]
-        .find(b =>
-          b.innerText.toLowerCase().includes("create with email")
-        );
-      btn?.click();
+        .find(b => b.innerText.toLowerCase().includes("create with email"));
+      if (btn) btn.click();
     });
 
     console.log("⏳ Waiting OTP...");
 
+    /// ===== WAIT OTP =====
     const otp = await waitForOTP(login, domain);
     console.log("🔐 OTP:", otp);
 
-    // ===== OTP INPUT =====
-    await page.waitForSelector('input[inputmode="numeric"]');
+    /// ===== INPUT OTP =====
+    await page.waitForSelector('input[inputmode="numeric"]', { timeout: 30000 });
     const inputs = await page.$$('input[inputmode="numeric"]');
 
-    for (let i = 0; i < otp.length; i++) {
+    for (let i = 0; i < otp.length && i < inputs.length; i++) {
       await inputs[i].type(otp[i], { delay: 120 });
     }
 
