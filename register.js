@@ -1,126 +1,213 @@
 /**
- * ALLSCALE REGISTER – VPS SAFE
- * - Auto Xvfb
- * - Proxy dari config.json (no interactive input)
+ * ALLSCALE AUTO REGISTER
+ * - VPS Ready (headless mode)
+ * - Proxy support (static/rotating)
+ * - Temp email (1secmail.com)
+ * - Auto save accounts
  */
 
-/// ===== AUTO XVFB =====
-if (!process.env.DISPLAY && !process.env.XVFB_RUN) {
-  const { spawn } = require("child_process");
-  console.log("⚠️ No DISPLAY detected, restarting with xvfb...");
-  spawn("xvfb-run", ["-a", "node", process.argv[1]], {
-    stdio: "inherit",
-    env: { ...process.env, XVFB_RUN: "1" }
-  });
-  process.exit(0);
-}
-
-/// ===== DEPENDENCIES =====
-const puppeteer = require("puppeteer-extra");
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
-const fs = require("fs");
-const { createTempEmail, waitForOTP } = require("./email");
-const { loadProxy } = require("./proxy");
-const { logError } = require("./logger");
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const fs = require('fs');
+const { getTempEmail, getOTP } = require('./tempmail');
+const { sleep, saveAccount, log } = require('./utils');
 
 puppeteer.use(StealthPlugin());
 
-(async () => {
+// Load config
+const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
+
+async function register() {
+  let browser;
+  
   try {
-    /// ===== LOAD CONFIG =====
-    const config = JSON.parse(fs.readFileSync("config.json", "utf-8"));
-    const referral = config.referral_code || "";
-    const proxyMode = config.proxy_mode || "none"; // "none" | "static" | "rotating"
+    log('🚀 Starting registration...');
     
-    let registerUrl = "https://app.allscale.io/pay/register";
-    if (referral) registerUrl += `?code=${referral}`;
-
-    /// ===== LOAD PROXY =====
-    let proxy = null;
-    if (proxyMode === "static") proxy = loadProxy("static");
-    if (proxyMode === "rotating") proxy = loadProxy("rotating");
-    
-    console.log("🌐 Proxy Mode:", proxyMode.toUpperCase());
-    console.log("🌐 Proxy:", proxy || "NONE");
-
-    /// ===== BROWSER ARGS =====
+    // Browser args
     const args = [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-blink-features=AutomationControlled",
-      "--disable-gpu",
-      "--disable-dev-shm-usage"
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-blink-features=AutomationControlled'
     ];
-    if (proxy) args.push(`--proxy-server=${proxy}`);
-
-    /// ===== LAUNCH BROWSER =====
-    const browser = await puppeteer.launch({
-      headless: false,
-      defaultViewport: null,
-      args
+    
+    // Add proxy if configured
+    if (config.proxy_mode !== 'none' && config.proxy[config.proxy_mode]) {
+      const proxy = config.proxy[config.proxy_mode];
+      args.push(`--proxy-server=${proxy}`);
+      log(`🌐 Using proxy: ${proxy}`);
+    } else {
+      log('🌐 No proxy');
+    }
+    
+    // Launch browser
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args,
+      defaultViewport: { width: 1280, height: 720 }
     });
+    
     const page = await browser.newPage();
-
-    /// ===== PROXY AUTH =====
-    if (proxy && proxy.includes("@")) {
-      const auth = proxy.split("//")[1].split("@")[0].split(":");
-      await page.authenticate({
-        username: auth[0],
-        password: auth[1]
-      });
-    }
-
-    /// ===== TEMP EMAIL =====
-    const { email, login, domain } = await createTempEmail();
-    console.log("📧 Temp Email:", email);
-
-    /// ===== OPEN REGISTER PAGE =====
-    console.log("🌍 Opening:", registerUrl);
-    await page.goto(registerUrl, { waitUntil: "networkidle2", timeout: 60000 });
-
-    /// ===== FILL FORM =====
-    await page.waitForSelector('input[type="email"]', { timeout: 30000 });
-    await page.type('input[type="email"]', email, { delay: 80 });
-
-    // Check all checkboxes
-    const checkboxes = await page.$('input[type="checkbox"]');
-    for (const cb of checkboxes) {
-      await cb.click();
-      await new Promise(r => setTimeout(r, 300));
-    }
-
-    // Click "Create with email" button
-    await page.evaluate(() => {
-      const btn = [...document.querySelectorAll("button")]
-        .find(b => b.innerText.toLowerCase().includes("create with email"));
-      if (btn) btn.click();
+    
+    // Set user agent
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    
+    // Get temp email
+    log('📧 Getting temp email...');
+    const email = await getTempEmail();
+    log(`📧 Email: ${email}`);
+    
+    // Go to register page with referral
+    const registerUrl = `https://app.allscale.io/pay/register?code=${config.referral_code}`;
+    log(`🌍 Opening: ${registerUrl}`);
+    
+    await page.goto(registerUrl, { 
+      waitUntil: 'networkidle2',
+      timeout: 60000 
     });
-
-    console.log("⏳ Waiting for OTP...");
-
-    /// ===== WAIT OTP =====
-    const otp = await waitForOTP(login, domain);
-    console.log("🔐 OTP Received:", otp);
-
-    /// ===== INPUT OTP =====
-    await page.waitForSelector('input[inputmode="numeric"]', { timeout: 30000 });
-    const inputs = await page.$$('input[inputmode="numeric"]');
     
-    for (let i = 0; i < otp.length && i < inputs.length; i++) {
-      await inputs[i].type(otp[i], { delay: 120 });
+    await sleep(3000);
+    
+    // Take screenshot for debugging
+    await page.screenshot({ path: 'step1-loaded.png' });
+    log('📸 Screenshot saved: step1-loaded.png');
+    
+    // Input email
+    log('✍️ Typing email...');
+    const emailInput = await page.waitForSelector('input[type="email"]', { timeout: 10000 });
+    await emailInput.click();
+    await sleep(500);
+    await emailInput.type(email, { delay: 100 });
+    
+    await sleep(1000);
+    
+    // Check all checkboxes
+    log('✅ Checking checkboxes...');
+    const checkedCount = await page.evaluate(() => {
+      const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+      let count = 0;
+      checkboxes.forEach(cb => {
+        if (!cb.checked) {
+          cb.click();
+          count++;
+        }
+      });
+      return count;
+    });
+    log(`✅ Checked ${checkedCount} checkboxes`);
+    
+    await sleep(1000);
+    await page.screenshot({ path: 'step2-filled.png' });
+    
+    // Find and click submit button
+    log('🔘 Looking for submit button...');
+    const buttonClicked = await page.evaluate(() => {
+      // Try different button texts
+      const texts = ['create with email', 'sign up', 'register', 'continue'];
+      const buttons = Array.from(document.querySelectorAll('button'));
+      
+      for (const text of texts) {
+        const btn = buttons.find(b => 
+          b.innerText.toLowerCase().includes(text) ||
+          b.textContent.toLowerCase().includes(text)
+        );
+        if (btn && !btn.disabled) {
+          btn.click();
+          return text;
+        }
+      }
+      return null;
+    });
+    
+    if (buttonClicked) {
+      log(`✅ Clicked button: "${buttonClicked}"`);
+    } else {
+      log('⚠️ Button not found, trying Enter...');
+      await page.keyboard.press('Enter');
     }
-
-    console.log("✅ REGISTER SUCCESS!");
-    console.log("📧 Email:", email);
     
-    // Wait to see result
-    await new Promise(r => setTimeout(r, 5000));
-    await browser.close();
-
+    await sleep(3000);
+    await page.screenshot({ path: 'step3-submitted.png' });
+    
+    // Wait for OTP input
+    log('⏳ Waiting for OTP input field...');
+    await page.waitForSelector('input[inputmode="numeric"], input[type="text"][maxlength="6"]', { 
+      timeout: 30000 
+    });
+    
+    log('🔐 Getting OTP from email...');
+    const otp = await getOTP(email);
+    log(`🔐 OTP: ${otp}`);
+    
+    // Input OTP
+    log('✍️ Entering OTP...');
+    const otpEntered = await page.evaluate((code) => {
+      // Method 1: Individual inputs
+      const inputs = document.querySelectorAll('input[inputmode="numeric"]');
+      if (inputs.length === code.length) {
+        inputs.forEach((input, i) => {
+          input.value = code[i];
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        return 'individual';
+      }
+      
+      // Method 2: Single input
+      const singleInput = document.querySelector('input[type="text"][maxlength="6"]');
+      if (singleInput) {
+        singleInput.value = code;
+        singleInput.dispatchEvent(new Event('input', { bubbles: true }));
+        return 'single';
+      }
+      
+      return null;
+    }, otp);
+    
+    log(`✅ OTP entered using: ${otpEntered}`);
+    
+    await sleep(2000);
+    await page.screenshot({ path: 'step4-otp.png' });
+    
+    // Auto-submit or press Enter
+    await page.keyboard.press('Enter');
+    
+    await sleep(5000);
+    await page.screenshot({ path: 'step5-final.png' });
+    
+    // Check if success
+    const currentUrl = page.url();
+    log(`📍 Final URL: ${currentUrl}`);
+    
+    if (currentUrl.includes('dashboard') || currentUrl.includes('home') || !currentUrl.includes('register')) {
+      log('✅ REGISTRATION SUCCESS!');
+      saveAccount(email, config.referral_code);
+      return true;
+    } else {
+      log('⚠️ Registration may have failed - check screenshots');
+      return false;
+    }
+    
   } catch (err) {
-    logError("REGISTER_MAIN", err);
-    console.log("❌ REGISTER FAILED");
-    console.log("Error:", err.message);
-    process.exit(1);
+    log(`❌ ERROR: ${err.message}`);
+    console.error(err);
+    
+    if (browser) {
+      await browser.pages().then(pages => 
+        pages[0]?.screenshot({ path: 'error.png' }).catch(() => {})
+      );
+    }
+    
+    return false;
+  } finally {
+    if (browser) {
+      await sleep(2000);
+      await browser.close();
+    }
   }
+}
+
+// Run
+(async () => {
+  const success = await register();
+  process.exit(success ? 0 : 1);
 })();
