@@ -328,7 +328,15 @@ async function sendOTPCode(axiosInstance, email, refCode) {
     check_user_existence: false
   };
   
-  const headers = getGlobalHeaders(url, refCode);
+  const timestamp = Math.floor(Date.now() / 1000);
+  const headers = {
+    ...getGlobalHeaders(url, refCode),
+    // Secret key khusus untuk send_email_otp
+    'secret-key': '23ca077460285e058d3b84ae682b683bcec5b9b23e940ea60e5b8f73a9cb3eb',
+    'timestamp': timestamp.toString(),
+    'x-system-timestamp': timestamp.toString()
+  };
+  
   const spinner = createSpinner('Sending OTP code...');
   spinner.start();
   
