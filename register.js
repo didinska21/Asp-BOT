@@ -9,6 +9,7 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const fs = require('fs');
+const readline = require('readline');
 const { getTempEmail, getOTP } = require('./tempmail');
 const { sleep, saveAccount, log } = require('./utils');
 
@@ -17,11 +18,59 @@ puppeteer.use(StealthPlugin());
 // Load config
 const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
 
+// Interactive proxy selection
+async function selectProxy() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  return new Promise((resolve) => {
+    console.log('\n========== PROXY SELECTION ==========');
+    console.log('1. No Proxy');
+    console.log('2. Static Proxy');
+    console.log('3. Rotating Proxy');
+    console.log('=====================================\n');
+    
+    rl.question('Choose proxy option (1/2/3): ', (answer) => {
+      rl.close();
+      
+      const choice = answer.trim();
+      
+      if (choice === '1') {
+        resolve({ mode: 'none', proxy: null });
+      } else if (choice === '2') {
+        const proxy = config.proxy.static;
+        if (!proxy || proxy.includes('user:pass')) {
+          console.log('⚠️  Static proxy not configured in config.json');
+          resolve({ mode: 'none', proxy: null });
+        } else {
+          resolve({ mode: 'static', proxy });
+        }
+      } else if (choice === '3') {
+        const proxy = config.proxy.rotating;
+        if (!proxy || proxy.includes('user:pass')) {
+          console.log('⚠️  Rotating proxy not configured in config.json');
+          resolve({ mode: 'none', proxy: null });
+        } else {
+          resolve({ mode: 'rotating', proxy });
+        }
+      } else {
+        console.log('Invalid choice, using no proxy');
+        resolve({ mode: 'none', proxy: null });
+      }
+    });
+  });
+}
+
 async function register() {
   let browser;
   
   try {
     log('🚀 Starting registration...');
+    
+    // Select proxy interactively
+    const { mode, proxy } = await selectProxy();
     
     // Browser args
     const args = [
@@ -31,11 +80,10 @@ async function register() {
       '--disable-blink-features=AutomationControlled'
     ];
     
-    // Add proxy if configured
-    if (config.proxy_mode !== 'none' && config.proxy[config.proxy_mode]) {
-      const proxy = config.proxy[config.proxy_mode];
+    // Add proxy if selected
+    if (proxy) {
       args.push(`--proxy-server=${proxy}`);
-      log(`🌐 Using proxy: ${proxy}`);
+      log(`🌐 Using ${mode} proxy: ${proxy}`);
     } else {
       log('🌐 No proxy');
     }
@@ -54,8 +102,8 @@ async function register() {
     
     // Get temp email
     log('📧 Getting temp email...');
-    const email = await getTempEmail();
-    log(`📧 Email: ${email}`);
+    const emailData = await getTempEmail();
+    log(`📧 Email: ${emailData.email}`);
     
     // Go to register page with referral
     const registerUrl = `https://app.allscale.io/pay/register?code=${config.referral_code}`;
@@ -77,7 +125,7 @@ async function register() {
     const emailInput = await page.waitForSelector('input[type="email"]', { timeout: 10000 });
     await emailInput.click();
     await sleep(500);
-    await emailInput.type(email, { delay: 100 });
+    await emailInput.type(emailData.email, { delay: 100 });
     
     await sleep(1000);
     
@@ -136,7 +184,7 @@ async function register() {
     });
     
     log('🔐 Getting OTP from email...');
-    const otp = await getOTP(email);
+    const otp = await getOTP(emailData);
     log(`🔐 OTP: ${otp}`);
     
     // Input OTP
@@ -180,7 +228,7 @@ async function register() {
     
     if (currentUrl.includes('dashboard') || currentUrl.includes('home') || !currentUrl.includes('register')) {
       log('✅ REGISTRATION SUCCESS!');
-      saveAccount(email, config.referral_code);
+      saveAccount(emailData.email, config.referral_code);
       return true;
     } else {
       log('⚠️ Registration may have failed - check screenshots');
