@@ -177,11 +177,66 @@ async function register() {
     await sleep(3000);
     await page.screenshot({ path: 'step3-submitted.png' });
     
-    // Wait for OTP input
-    log('⏳ Waiting for OTP input field...');
-    await page.waitForSelector('input[inputmode="numeric"], input[type="text"][maxlength="6"]', { 
-      timeout: 30000 
+    // Debug: Print current page info
+    const currentUrlAfterSubmit = page.url();
+    log(`📍 Current URL after submit: ${currentUrlAfterSubmit}`);
+    
+    // Check if there's any error message
+    const errorMsg = await page.evaluate(() => {
+      const errorElements = document.querySelectorAll('[class*="error"], [class*="alert"], [role="alert"]');
+      return Array.from(errorElements).map(e => e.textContent.trim()).join(' | ');
     });
+    if (errorMsg) {
+      log(`⚠️ Error message found: ${errorMsg}`);
+    }
+    
+    // Wait for OTP input (try multiple selectors)
+    log('⏳ Waiting for OTP input field...');
+    
+    let otpInputFound = false;
+    const otpSelectors = [
+      'input[inputmode="numeric"]',
+      'input[type="text"][maxlength="6"]',
+      'input[type="text"][maxlength="4"]',
+      'input[name*="code"]',
+      'input[name*="otp"]',
+      'input[name*="verification"]',
+      'input[placeholder*="code" i]',
+      'input[placeholder*="otp" i]',
+      'input[autocomplete="one-time-code"]'
+    ];
+    
+    for (const selector of otpSelectors) {
+      try {
+        await page.waitForSelector(selector, { timeout: 5000 });
+        log(`✅ Found OTP input with selector: ${selector}`);
+        otpInputFound = true;
+        break;
+      } catch (e) {
+        // Try next selector
+      }
+    }
+    
+    if (!otpInputFound) {
+      log('❌ No OTP input found, taking debug screenshot...');
+      await page.screenshot({ path: 'step3-no-otp.png', fullPage: true });
+      
+      // Print all input fields for debugging
+      const allInputs = await page.evaluate(() => {
+        const inputs = document.querySelectorAll('input');
+        return Array.from(inputs).map(inp => ({
+          type: inp.type,
+          name: inp.name,
+          id: inp.id,
+          placeholder: inp.placeholder,
+          maxlength: inp.maxLength
+        }));
+      });
+      log('📋 All input fields found:');
+      console.log(JSON.stringify(allInputs, null, 2));
+      
+      throw new Error('OTP input field not found after submit');
+    }
     
     log('🔐 Getting OTP from email...');
     const otp = await getOTP(emailData);
