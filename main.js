@@ -112,15 +112,15 @@ function getGlobalHeaders(url, refCode, extraHeaders = {}) {
     'user-agent': ua.toString()
   };
 
-  // Add timestamp and signature for specific endpoints
-  if (url.includes('/api/')) {
-    const timestamp = Math.floor(Date.now() / 1000);
-    const signature = crypto.createHash('sha256')
-      .update('vT*IUEGgyL' + timestamp)
-      .digest('hex');
-    headers['x-timestamp'] = timestamp;
-    headers['x-signature'] = signature;
-  }
+  // DISABLED: Timestamp dan signature mungkin menyebabkan Auth error
+  // if (url.includes('/api/')) {
+  //   const timestamp = Math.floor(Date.now() / 1000);
+  //   const signature = crypto.createHash('sha256')
+  //     .update('vT*IUEGgyL' + timestamp)
+  //     .digest('hex');
+  //   headers['x-timestamp'] = timestamp;
+  //   headers['x-signature'] = signature;
+  // }
 
   return Object.assign(headers, extraHeaders);
 }
