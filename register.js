@@ -83,10 +83,10 @@ puppeteer.use(StealthPlugin());
     await page.type('input[type="email"]', email, { delay: 80 });
 
     // Check all checkboxes
-    const checkboxes = await page.$$('input[type="checkbox"]');
+    const checkboxes = await page.$('input[type="checkbox"]');
     for (const cb of checkboxes) {
       await cb.click();
-      await page.waitForTimeout(300);
+      await new Promise(r => setTimeout(r, 300));
     }
 
     // Click "Create with email" button
@@ -114,7 +114,7 @@ puppeteer.use(StealthPlugin());
     console.log("📧 Email:", email);
     
     // Wait to see result
-    await page.waitForTimeout(5000);
+    await new Promise(r => setTimeout(r, 5000));
     await browser.close();
 
   } catch (err) {
