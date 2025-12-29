@@ -25,7 +25,6 @@ async function createGuerrillaMailClient() {
 
   const email = response.data.email_addr;
   const sid = response.data.sid_token;
-  headless: true  // atau 'new'
 
   return {
     email,
@@ -104,7 +103,7 @@ async function registerAllscale() {
 
     // Browser options
     const launchOptions = {
-      headless: false,
+      headless: 'new', // Gunakan 'new' untuk headless mode modern
       executablePath: '/usr/bin/chromium-browser', // Path yang sudah ditemukan
       args: [
         '--no-sandbox',
@@ -112,6 +111,8 @@ async function registerAllscale() {
         '--disable-blink-features=AutomationControlled',
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-gpu',
+        '--disable-dev-shm-usage',
       ]
     };
 
