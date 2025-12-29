@@ -123,6 +123,41 @@ async function waitForCloudflareBypass(page, timeout = 60000) {
   throw new Error('Cloudflare bypass timeout');
 }
 
+// Tunggu Cloudflare Turnstile challenge selesai
+async function waitForTurnstileComplete(page, timeout = 120000) {
+  console.log('⏳ Menunggu Cloudflare Turnstile challenge...');
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < timeout) {
+    try {
+      // Cek apakah ada iframe Cloudflare Turnstile
+      const hasTurnstile = await page.evaluate(() => {
+        const iframe = document.querySelector('iframe[src*="cloudflare"]');
+        return iframe !== null;
+      });
+      
+      if (!hasTurnstile) {
+        console.log('✅ Turnstile challenge selesai atau tidak ada');
+        return true;
+      }
+      
+      // Cek apakah sudah ada teks "verifying"
+      const pageText = await page.evaluate(() => document.body.innerText.toLowerCase());
+      
+      if (pageText.includes('verifying')) {
+        console.log('🔄 Turnstile sedang memverifikasi...');
+      }
+      
+      await delay(2000);
+    } catch (error) {
+      console.log('Error checking Turnstile:', error.message);
+    }
+  }
+  
+  console.log('⚠️ Turnstile timeout, melanjutkan...');
+  return false;
+}
+
 // ===== MAIN REGISTRATION FUNCTION =====
 async function registerAllscale() {
   const referralCode = process.env.REFERRAL_CODE;
@@ -244,14 +279,11 @@ async function registerAllscale() {
         const parent = cb.closest('label') || cb.parentElement;
         const text = parent?.textContent.toLowerCase() || '';
         
-        console.log('Checkbox found:', text.substring(0, 100));
-        
         if (text.includes('agree') || text.includes('terms') || 
             text.includes('privacy') || text.includes('policy')) {
           if (!cb.checked) {
             cb.click();
             found = true;
-            console.log('✓ Checkbox clicked');
           }
         }
       }
@@ -262,48 +294,23 @@ async function registerAllscale() {
       console.log('✅ Checkbox terms dicentang');
       await delay(1500);
       await page.screenshot({ path: 'step2b-checkbox.png' });
-    } else {
-      console.log('⚠️ Checkbox tidak ditemukan atau sudah tercentang');
     }
 
-    // DEBUGGING: Cek semua button yang ada
-    console.log('🔍 Mencari semua button di halaman...');
-    const buttons = await page.evaluate(() => {
-      const allButtons = Array.from(document.querySelectorAll('button, [role="button"]'));
-      return allButtons.map((btn, idx) => ({
-        index: idx,
-        text: btn.textContent.trim().substring(0, 50),
-        disabled: btn.disabled,
-        visible: btn.offsetParent !== null,
-        className: btn.className
-      }));
-    });
-    
-    console.log('📋 Buttons ditemukan:');
-    buttons.forEach(btn => {
-      console.log(`   [${btn.index}] "${btn.text}" - disabled:${btn.disabled}, visible:${btn.visible}`);
-    });
-
-    // Cari button "Create with Email" yang BUKAN disabled
-    console.log('🎯 Mencari button "Create with Email"...');
+    // Klik button "Create with Email"
+    console.log('🔍 Mencari button "Create with Email"...');
     const buttonClicked = await page.evaluate(() => {
       const allButtons = Array.from(document.querySelectorAll('button, [role="button"]'));
       
       for (const btn of allButtons) {
         const text = btn.textContent.toLowerCase().trim();
         
-        // Debug setiap button
-        console.log(`Checking button: "${text.substring(0, 30)}", disabled: ${btn.disabled}`);
-        
         if (text.includes('create with email') || 
             (text.includes('create') && text.includes('email'))) {
           
           if (btn.disabled) {
-            console.log('Button found but DISABLED:', text);
             return false;
           }
           
-          console.log('Clicking button:', text);
           btn.click();
           return true;
         }
@@ -314,67 +321,24 @@ async function registerAllscale() {
     if (buttonClicked) {
       console.log('✅ Button "Create with Email" diklik!');
     } else {
-      console.log('⚠️ Button DISABLED atau tidak ditemukan!');
-      console.log('💡 Kemungkinan: Email belum valid atau checkbox belum dicentang');
+      throw new Error('Button tidak ditemukan atau disabled');
     }
 
     await delay(3000);
     await page.screenshot({ path: 'step3-after-click.png' });
 
-    // Cek perubahan halaman dengan lebih detail
-    console.log('🔍 Mengecek perubahan halaman...');
-    const currentUrl = page.url();
-    const pageContent = await page.evaluate(() => document.body.innerText);
-    
-    console.log(`📍 Current URL: ${currentUrl}`);
-    console.log('📄 Page keywords:', {
-      hasRegister: pageContent.includes('Create your account'),
-      hasVerification: pageContent.includes('verification') || pageContent.includes('Verification'),
-      hasCode: pageContent.includes('code') || pageContent.includes('Code'),
-      hasOTP: pageContent.includes('OTP') || pageContent.includes('otp'),
-      hasEmail: pageContent.includes('Check your email')
-    });
+    // Tunggu Cloudflare Turnstile selesai
+    console.log('🛡️ Menunggu Cloudflare Turnstile...');
+    await waitForTurnstileComplete(page, 120000);
+    await delay(5000); // Beri waktu ekstra untuk email dikirim
 
-    // Jika halaman tidak berubah, coba click dengan cara lain
-    if (pageContent.includes('Create your account') && !pageContent.includes('verification')) {
-      console.log('⚠️ Halaman masih di register form!');
-      console.log('🔄 Mencoba metode alternatif...');
-      
-      // Method alternatif: Scroll dan tunggu button enabled
-      await page.evaluate(() => window.scrollBy(0, 300));
-      await delay(2000);
-      
-      // Coba lagi dengan force click
-      const forceClicked = await page.evaluate(() => {
-        const buttons = Array.from(document.querySelectorAll('button'));
-        for (const btn of buttons) {
-          const text = btn.textContent.toLowerCase();
-          if (text.includes('email') && !text.includes('passkey')) {
-            // Force click bahkan jika disabled
-            btn.disabled = false;
-            btn.click();
-            
-            // Trigger events manually
-            btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-            return true;
-          }
-        }
-        return false;
-      });
-      
-      if (forceClicked) {
-        console.log('✅ Force click berhasil');
-        await delay(3000);
-      }
-    }
+    await page.screenshot({ path: 'step4-post-turnstile.png' });
 
-    await page.screenshot({ path: 'step4-final-state.png' });
-
-    // Tunggu OTP dari email
-    console.log('📬 Menunggu OTP dari email...');
+    // Tunggu OTP dari email dengan waktu lebih lama
+    console.log('📬 Menunggu OTP dari email (bisa memakan waktu 1-2 menit)...');
     let otp = null;
     let attempts = 0;
-    const maxAttempts = 40;
+    const maxAttempts = 60; // 3 menit (60 x 3 detik)
 
     while (!otp && attempts < maxAttempts) {
       await delay(3000);
@@ -382,7 +346,10 @@ async function registerAllscale() {
       
       try {
         const emails = await emailClient.checkEmail();
-        console.log(`📨 Cek email attempt ${attempts}/${maxAttempts}... (${emails.length} email)`);
+        
+        if (attempts % 5 === 0) {
+          console.log(`📨 Cek email attempt ${attempts}/${maxAttempts}... (${emails.length} email)`);
+        }
         
         if (emails && emails.length > 0) {
           for (const mail of emails) {
@@ -430,20 +397,20 @@ async function registerAllscale() {
     }
 
     if (!otp) {
-      console.log('❌ OTP tidak ditemukan.');
+      console.log('❌ OTP tidak ditemukan setelah menunggu.');
       console.log('💡 Kemungkinan penyebab:');
-      console.log('   1. Button submit DISABLED karena validasi gagal');
-      console.log('   2. Email tidak valid untuk website ini');
-      console.log('   3. Checkbox terms belum tercentang dengan benar');
-      console.log('📸 Cek screenshot step4-final-state.png untuk detail');
-      throw new Error('OTP tidak ditemukan - form mungkin belum ter-submit');
+      console.log('   1. Cloudflare Turnstile tidak selesai');
+      console.log('   2. Email provider diblokir oleh Allscale');
+      console.log('   3. Rate limit dari Allscale');
+      console.log('📸 Cek screenshot step4-post-turnstile.png');
+      throw new Error('OTP tidak diterima - Turnstile mungkin gagal');
     }
 
     // Input OTP
     console.log('🔢 Memasukkan OTP...');
     await delay(2000);
     
-    const otpInputs = await page.$$('input[type="text"], input[type="number"]');
+    const otpInputs = await page.$$('input[type="text"], input[type="number"], input[inputmode="numeric"]');
     
     if (otpInputs.length === 1) {
       await otpInputs[0].type(otp, { delay: 100 });
