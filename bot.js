@@ -1,4 +1,4 @@
-// bot.js - Enhanced Version with Advanced Cloudflare Bypass
+// bot.js - Ultimate Version with Multiple Email Providers
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { config } from 'dotenv';
@@ -13,28 +13,23 @@ const randomDelay = (min, max) => delay(Math.floor(Math.random() * (max - min + 
 
 // ===== ENHANCED STEALTH FUNCTIONS =====
 async function setupEnhancedStealth(page) {
-  // Remove webdriver traces
   await page.evaluateOnNewDocument(() => {
     Object.defineProperty(navigator, 'webdriver', {
       get: () => undefined,
     });
     
-    // Mock plugins
     Object.defineProperty(navigator, 'plugins', {
       get: () => [1, 2, 3, 4, 5],
     });
     
-    // Mock languages
     Object.defineProperty(navigator, 'languages', {
       get: () => ['en-US', 'en'],
     });
     
-    // Chrome runtime
     window.chrome = {
       runtime: {},
     };
     
-    // Permissions
     const originalQuery = window.navigator.permissions.query;
     window.navigator.permissions.query = (parameters) => (
       parameters.name === 'notifications' ?
@@ -44,7 +39,6 @@ async function setupEnhancedStealth(page) {
   });
 }
 
-// Simulate human mouse movements
 async function humanMouseMove(page) {
   const dimensions = await page.evaluate(() => ({
     width: window.innerWidth,
@@ -59,7 +53,9 @@ async function humanMouseMove(page) {
   }
 }
 
-// ===== TEMP MAIL CLIENTS =====
+// ===== MULTIPLE TEMP MAIL PROVIDERS =====
+
+// 1. Mail.tm
 async function createMailTmClient() {
   const baseURL = 'https://api.mail.tm';
   
@@ -87,6 +83,7 @@ async function createMailTmClient() {
     email,
     token,
     baseURL,
+    provider: 'Mail.tm',
     
     async checkEmail() {
       try {
@@ -108,6 +105,7 @@ async function createMailTmClient() {
   };
 }
 
+// 2. TempMail.lol
 async function createTempMailLolClient() {
   const baseURL = 'https://api.tempmail.lol';
   
@@ -121,6 +119,7 @@ async function createTempMailLolClient() {
   return {
     email,
     token,
+    provider: 'TempMail.lol',
     
     async checkEmail() {
       try {
@@ -133,7 +132,144 @@ async function createTempMailLolClient() {
   };
 }
 
-// ===== ENHANCED CLOUDFLARE BYPASS =====
+// 3. Guerrilla Mail
+async function createGuerrillaMailClient() {
+  const baseURL = 'https://api.guerrillamail.com/ajax.php';
+  
+  // Get email address
+  const response = await axios.get(`${baseURL}?f=get_email_address`, {
+    headers: { 'User-Agent': 'Mozilla/5.0' }
+  });
+  
+  const email = response.data.email_addr;
+  const sidToken = response.data.sid_token;
+  
+  return {
+    email,
+    sidToken,
+    provider: 'GuerrillaMail',
+    
+    async checkEmail() {
+      try {
+        const res = await axios.get(`${baseURL}?f=check_email&sid_token=${this.sidToken}&seq=0`);
+        return res.data.list || [];
+      } catch (e) {
+        return [];
+      }
+    },
+    
+    async getEmailBody(emailId) {
+      const res = await axios.get(`${baseURL}?f=fetch_email&sid_token=${this.sidToken}&email_id=${emailId}`);
+      return res.data;
+    }
+  };
+}
+
+// 4. 10MinuteMail
+async function create10MinuteMailClient() {
+  const baseURL = 'https://10minutemail.net';
+  
+  // Generate session
+  const response = await axios.get(`${baseURL}/address.api.php`, {
+    headers: { 'User-Agent': 'Mozilla/5.0' }
+  });
+  
+  const email = response.data.mail_get_mail;
+  
+  return {
+    email,
+    provider: '10MinuteMail',
+    
+    async checkEmail() {
+      try {
+        const res = await axios.get(`${baseURL}/address.api.php`);
+        return res.data.mail_list || [];
+      } catch (e) {
+        return [];
+      }
+    }
+  };
+}
+
+// 5. TempMail.plus
+async function createTempMailPlusClient() {
+  const baseURL = 'https://tempmail.plus/api/mails';
+  
+  // Generate random email
+  const randomString = Math.random().toString(36).substring(2, 10);
+  const email = `${randomString}@tempmail.plus`;
+  
+  return {
+    email,
+    provider: 'TempMail.plus',
+    
+    async checkEmail() {
+      try {
+        const emailHash = Buffer.from(this.email).toString('base64');
+        const res = await axios.get(`${baseURL}?email=${emailHash}`);
+        return res.data || [];
+      } catch (e) {
+        return [];
+      }
+    }
+  };
+}
+
+// 6. Mohmal
+async function createMohmalClient() {
+  const baseURL = 'https://www.mohmal.com/en/api';
+  
+  // Generate random inbox
+  const randomString = Math.random().toString(36).substring(2, 10);
+  
+  const response = await axios.post(`${baseURL}/inbox/create`, {
+    username: randomString
+  });
+  
+  const email = `${randomString}@mohmal.com`;
+  
+  return {
+    email,
+    username: randomString,
+    provider: 'Mohmal',
+    
+    async checkEmail() {
+      try {
+        const res = await axios.get(`${baseURL}/inbox/${this.username}`);
+        return res.data.messages || [];
+      } catch (e) {
+        return [];
+      }
+    }
+  };
+}
+
+// Email Provider Manager with Cascade Fallback
+async function createEmailClient() {
+  const providers = [
+    { name: 'Mail.tm', fn: createMailTmClient },
+    { name: 'TempMail.lol', fn: createTempMailLolClient },
+    { name: 'GuerrillaMail', fn: createGuerrillaMailClient },
+    { name: '10MinuteMail', fn: create10MinuteMailClient },
+    { name: 'TempMail.plus', fn: createTempMailPlusClient },
+    { name: 'Mohmal', fn: createMohmalClient },
+  ];
+  
+  for (const provider of providers) {
+    try {
+      console.log(`⏳ Mencoba ${provider.name}...`);
+      const client = await provider.fn();
+      console.log(`✅ Email generated (${provider.name}): ${client.email}`);
+      return client;
+    } catch (error) {
+      console.log(`⚠️ ${provider.name} gagal: ${error.message}`);
+    }
+  }
+  
+  throw new Error('Semua email provider gagal');
+}
+
+// ===== CLOUDFLARE BYPASS =====
 async function waitForCloudflareBypass(page, timeout = 60000) {
   console.log('⏳ Menunggu Cloudflare bypass...');
   const startTime = Date.now();
@@ -158,7 +294,6 @@ async function waitForCloudflareBypass(page, timeout = 60000) {
   throw new Error('Cloudflare bypass timeout');
 }
 
-// ENHANCED: Smart Turnstile Handler dengan multiple strategies
 async function waitForTurnstileComplete(page, timeout = 180000) {
   console.log('🛡️ Menunggu Cloudflare Turnstile dengan smart detection...');
   const startTime = Date.now();
@@ -166,12 +301,10 @@ async function waitForTurnstileComplete(page, timeout = 180000) {
   
   while (Date.now() - startTime < timeout) {
     try {
-      // Strategy 1: Check if Turnstile iframe exists
       const turnstileState = await page.evaluate(() => {
         const iframe = document.querySelector('iframe[src*="cloudflare"], iframe[src*="turnstile"]');
         if (!iframe) return 'no_turnstile';
         
-        // Check if challenge is in progress
         const verifyingText = document.body.innerText.toLowerCase();
         if (verifyingText.includes('verifying')) return 'verifying';
         
@@ -183,14 +316,12 @@ async function waitForTurnstileComplete(page, timeout = 180000) {
         return true;
       }
       
-      // Strategy 2: Simulate human behavior
       if (turnstileState === 'verifying' && lastStrategy !== 'mouse_move') {
         console.log('🖱️ Simulasi gerakan mouse...');
         await humanMouseMove(page);
         lastStrategy = 'mouse_move';
       }
       
-      // Strategy 3: Check for success indicators
       const hasSuccessIndicators = await page.evaluate(() => {
         const text = document.body.innerText.toLowerCase();
         return text.includes('verify to receive') || 
@@ -203,14 +334,12 @@ async function waitForTurnstileComplete(page, timeout = 180000) {
         return true;
       }
       
-      // Strategy 4: Check URL change
       const currentUrl = page.url();
       if (!currentUrl.includes('register') && !currentUrl.includes('challenge')) {
         console.log('✅ Turnstile berhasil - URL berubah');
         return true;
       }
       
-      // Strategy 5: Wait and retry
       const elapsed = Math.floor((Date.now() - startTime) / 1000);
       if (elapsed % 10 === 0) {
         console.log(`⏱️ Turnstile progress: ${elapsed}s / ${timeout/1000}s`);
@@ -228,14 +357,13 @@ async function waitForTurnstileComplete(page, timeout = 180000) {
   return false;
 }
 
-// ===== PROXY HANDLER (FIXED) =====
+// ===== PROXY HANDLER =====
 function parseProxy(proxyString) {
   if (!proxyString || proxyString.trim() === '') {
     return null;
   }
   
   try {
-    // Format: user:pass@hostname:port atau hostname:port
     const hasAuth = proxyString.includes('@');
     
     if (hasAuth) {
@@ -253,7 +381,6 @@ function parseProxy(proxyString) {
         password
       };
     } else {
-      // Format: hostname:port (no auth)
       const [hostname, port] = proxyString.split(':');
       
       if (!hostname || !port) {
@@ -275,10 +402,35 @@ function parseProxy(proxyString) {
   }
 }
 
+// ===== ENHANCED OTP DETECTION =====
+function extractOTP(text) {
+  if (!text) return null;
+  
+  const patterns = [
+    /\b(\d{6})\b/,
+    /code.*?(\d{6})/i,
+    /otp.*?(\d{6})/i,
+    /verification.*?(\d{6})/i,
+    /(\d{3}[\s-]?\d{3})/,
+    /your code is[:\s]*(\d{6})/i,
+    /allscale.*?(\d{6})/i,
+  ];
+  
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return match[1].replace(/[\s-]/g, '');
+    }
+  }
+  
+  return null;
+}
+
 // ===== MAIN REGISTRATION FUNCTION =====
 async function registerAllscale() {
   const referralCode = process.env.REFERRAL_CODE;
   const proxyString = process.env.PROXY;
+  const customEmail = process.env.CUSTOM_EMAIL; // Optional: untuk email pribadi
   
   if (!referralCode) {
     throw new Error('REFERRAL_CODE tidak ditemukan di .env');
@@ -288,24 +440,29 @@ async function registerAllscale() {
   let emailClient;
 
   try {
-    // Setup Temp Mail
-    console.log('📧 Setup email temporary...');
+    // Setup Email
+    console.log('📧 Setup email...');
     let email;
     
-    try {
-      console.log('⏳ Mencoba Mail.tm...');
-      emailClient = await createMailTmClient();
+    if (customEmail && customEmail.trim() !== '') {
+      // Use custom email if provided
+      email = customEmail;
+      console.log(`✅ Menggunakan custom email: ${email}`);
+      console.log('⚠️ CATATAN: Anda harus cek email manual untuk OTP!');
+      
+      // Create dummy client for custom email
+      emailClient = {
+        email: customEmail,
+        provider: 'Custom',
+        async checkEmail() {
+          console.log('💡 Cek inbox email Anda secara manual');
+          return [];
+        }
+      };
+    } else {
+      // Use temp email with cascade fallback
+      emailClient = await createEmailClient();
       email = emailClient.email;
-      console.log(`✅ Email generated (Mail.tm): ${email}`);
-    } catch (e) {
-      console.log('⚠️ Mail.tm gagal, mencoba TempMail.lol...');
-      try {
-        emailClient = await createTempMailLolClient();
-        email = emailClient.email;
-        console.log(`✅ Email generated (TempMail.lol): ${email}`);
-      } catch (e2) {
-        throw new Error('Semua email provider gagal');
-      }
     }
 
     // Parse proxy
@@ -324,7 +481,6 @@ async function registerAllscale() {
         '--disable-gpu',
         '--disable-dev-shm-usage',
         '--window-size=1280,800',
-        // Additional stealth args
         '--disable-infobars',
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
@@ -332,7 +488,6 @@ async function registerAllscale() {
       ]
     };
 
-    // Add proxy if configured
     if (proxyConfig) {
       launchOptions.args.push(`--proxy-server=${proxyConfig.server}`);
       console.log(`🌐 Menggunakan proxy: ${proxyConfig.server}`);
@@ -344,7 +499,6 @@ async function registerAllscale() {
     browser = await puppeteer.launch(launchOptions);
     const page = await browser.newPage();
 
-    // Authenticate proxy if needed
     if (proxyConfig && proxyConfig.username && proxyConfig.password) {
       await page.authenticate({ 
         username: proxyConfig.username, 
@@ -353,37 +507,29 @@ async function registerAllscale() {
       console.log('✅ Proxy authentication berhasil');
     }
 
-    // Setup enhanced stealth
     await setupEnhancedStealth(page);
 
-    // Set viewport dan user agent
     await page.setViewport({ width: 1280, height: 800 });
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     );
 
-    // Extra headers untuk lebih natural
     await page.setExtraHTTPHeaders({
       'Accept-Language': 'en-US,en;q=0.9',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     });
 
-    // Buka halaman register
     const registerUrl = `https://app.allscale.io/pay/register?code=${referralCode}`;
     console.log(`🌐 Membuka: ${registerUrl}`);
     await page.goto(registerUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
-    // Bypass Cloudflare
     await waitForCloudflareBypass(page);
     await randomDelay(2000, 4000);
 
-    // Human-like behavior
     await humanMouseMove(page);
 
-    // Screenshot
     await page.screenshot({ path: 'step1-loaded.png' });
 
-    // Tunggu dan isi email
     console.log('📝 Mengisi form email...');
     await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 30000 });
     await randomDelay(800, 1500);
@@ -392,7 +538,6 @@ async function registerAllscale() {
     await emailInput.click({ clickCount: 3 });
     await randomDelay(300, 600);
     
-    // Type dengan delay random seperti manusia
     for (const char of email) {
       await emailInput.type(char, { delay: Math.random() * 50 + 50 });
     }
@@ -400,7 +545,6 @@ async function registerAllscale() {
     await randomDelay(1000, 2000);
     await page.screenshot({ path: 'step2-email-filled.png' });
 
-    // Centang checkbox
     console.log('🔍 Mencari dan centang checkbox...');
     const checkboxFound = await page.evaluate(() => {
       const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
@@ -427,7 +571,6 @@ async function registerAllscale() {
       await page.screenshot({ path: 'step2b-checkbox.png' });
     }
 
-    // Klik button dengan retry logic
     console.log('🔍 Mencari button "Create with Email"...');
     let clickAttempts = 0;
     let buttonClicked = false;
@@ -470,18 +613,19 @@ async function registerAllscale() {
     await randomDelay(3000, 5000);
     await page.screenshot({ path: 'step3-after-click.png' });
 
-    // ENHANCED: Smart Turnstile handler
-    console.log('🛡️ Menangani Cloudflare Turnstile dengan smart detection...');
+    console.log('🛡️ Menangani Cloudflare Turnstile...');
     const turnstileSuccess = await waitForTurnstileComplete(page, 180000);
     
     if (!turnstileSuccess) {
       console.log('⚠️ Turnstile mungkin tidak selesai sempurna, tapi melanjutkan...');
     }
     
-    await randomDelay(5000, 8000);
+    // WAIT LONGER for email to be sent by Allscale
+    console.log('⏳ Menunggu Allscale mengirim email (15 detik)...');
+    await delay(15000);
+    
     await page.screenshot({ path: 'step4-post-turnstile.png' });
 
-    // Check apakah sudah di halaman verifikasi
     const isVerificationPage = await page.evaluate(() => {
       const text = document.body.innerText.toLowerCase();
       return text.includes('verify to receive') || 
@@ -490,18 +634,21 @@ async function registerAllscale() {
     });
     
     if (!isVerificationPage) {
-      console.log('⚠️ Belum sampai halaman verifikasi, mungkin Turnstile gagal');
-      console.log('💡 Coba lagi atau gunakan headless: false untuk debug manual');
+      console.log('⚠️ Belum sampai halaman verifikasi');
+      console.log(`💡 Provider: ${emailClient.provider}`);
+      console.log(`📧 Email: ${email}`);
       throw new Error('Gagal melewati Turnstile - tidak sampai halaman verifikasi');
     }
     
     console.log('✅ Berhasil sampai halaman verifikasi!');
+    console.log(`📧 Email yang digunakan: ${email}`);
+    console.log(`🔧 Provider: ${emailClient.provider}`);
 
-    // Tunggu OTP dengan waktu lebih lama
-    console.log('📬 Menunggu OTP dari email (max 3 menit)...');
+    // Enhanced OTP waiting with longer timeout
+    console.log('📬 Menunggu OTP dari email (max 5 menit)...');
     let otp = null;
     let attempts = 0;
-    const maxAttempts = 60;
+    const maxAttempts = 100; // 5 minutes
 
     while (!otp && attempts < maxAttempts) {
       await delay(3000);
@@ -510,65 +657,61 @@ async function registerAllscale() {
       try {
         const emails = await emailClient.checkEmail();
         
-        if (attempts % 5 === 0) {
-          console.log(`📨 Cek email attempt ${attempts}/${maxAttempts}... (${emails.length} email)`);
+        if (attempts % 10 === 0) {
+          console.log(`📨 Cek email attempt ${attempts}/${maxAttempts}... (${emails.length} email) [${emailClient.provider}]`);
         }
         
         if (emails && emails.length > 0) {
           for (const mail of emails) {
             const from = mail.from?.address || mail.from || 'unknown';
             const subject = mail.subject || mail.title || 'no subject';
-            console.log(`   📧 From: ${from}, Subject: ${subject}`);
+            console.log(`   📧 From: ${from}`);
+            console.log(`   📌 Subject: ${subject}`);
             
             let body = '';
-            if (mail.id) {
+            
+            if (mail.id && emailClient.getEmailBody) {
               try {
                 const fullMail = await emailClient.getEmailBody(mail.id);
                 body = fullMail.text || fullMail.intro || fullMail.body || fullMail.html || '';
               } catch (e) {
-                body = mail.intro || mail.text || '';
+                body = mail.intro || mail.text || mail.body || '';
               }
             } else {
-              body = mail.text || mail.intro || mail.body || '';
+              body = mail.text || mail.intro || mail.body || mail.mail_body || '';
             }
             
-            console.log(`   📄 Body snippet: ${body.substring(0, 150)}...`);
+            // Combine subject and body for better OTP detection
+            const fullText = `${subject} ${body}`;
+            console.log(`   📄 Content: ${fullText.substring(0, 200)}...`);
             
-            const patterns = [
-              /\b(\d{6})\b/,
-              /code.*?(\d{6})/i,
-              /otp.*?(\d{6})/i,
-              /verification.*?(\d{6})/i,
-              /(\d{3}[\s-]?\d{3})/,
-            ];
+            otp = extractOTP(fullText);
             
-            for (const pattern of patterns) {
-              const otpMatch = body.match(pattern);
-              if (otpMatch) {
-                otp = otpMatch[1].replace(/[\s-]/g, '');
-                console.log(`✅ OTP ditemukan: ${otp}`);
-                break;
-              }
+            if (otp) {
+              console.log(`✅ OTP ditemukan: ${otp}`);
+              break;
             }
-            
-            if (otp) break;
           }
         }
+        
+        if (otp) break;
+        
       } catch (emailError) {
         console.log(`⚠️ Error cek email: ${emailError.message}`);
       }
     }
 
     if (!otp) {
-      console.log('❌ OTP tidak ditemukan setelah 3 menit.');
-      console.log('💡 Kemungkinan:');
-      console.log('   1. Turnstile tidak diselesaikan dengan benar');
-      console.log('   2. Email belum terkirim (coba wait lebih lama)');
-      console.log('   3. Email provider diblokir');
+      console.log('❌ OTP tidak ditemukan setelah 5 menit.');
+      console.log('💡 Kemungkinan penyebab:');
+      console.log(`   1. Domain ${emailClient.provider} diblokir oleh Allscale`);
+      console.log('   2. Email butuh waktu lebih lama untuk sampai');
+      console.log('   3. Coba gunakan CUSTOM_EMAIL di .env');
+      console.log('\n📝 Untuk menggunakan email pribadi:');
+      console.log('   CUSTOM_EMAIL=your-email@gmail.com');
       throw new Error('OTP tidak diterima');
     }
 
-    // Input OTP
     console.log('🔢 Memasukkan OTP...');
     await randomDelay(2000, 3000);
     
@@ -587,7 +730,6 @@ async function registerAllscale() {
     await randomDelay(2000, 3000);
     await page.screenshot({ path: 'step5-otp-filled.png' });
 
-    // Submit OTP
     const verifyButton = await page.evaluateHandle(() => {
       const buttons = Array.from(document.querySelectorAll('button'));
       return buttons.find(btn => 
@@ -602,7 +744,6 @@ async function registerAllscale() {
       console.log('✅ OTP submitted');
     }
 
-    // Tunggu konfirmasi
     console.log('⏳ Menunggu konfirmasi...');
     await delay(5000);
     await page.screenshot({ path: 'step6-final.png' });
@@ -611,8 +752,9 @@ async function registerAllscale() {
     console.log(`📍 URL final: ${finalUrl}`);
 
     if (finalUrl.includes('dashboard') || finalUrl.includes('home') || !finalUrl.includes('register')) {
-      console.log('🎉 REGISTRASI BERHASIL!');
+      console.log('\n🎉 REGISTRASI BERHASIL! 🎉');
       console.log(`📧 Email: ${email}`);
+      console.log(`🔧 Provider: ${emailClient.provider}`);
       console.log(`🔗 Referral Code: ${referralCode}`);
     } else {
       console.log('⚠️ Status tidak pasti, cek screenshot step6-final.png');
@@ -621,7 +763,7 @@ async function registerAllscale() {
     await delay(3000);
 
   } catch (error) {
-    console.error('❌ ERROR:', error.message);
+    console.error('\n❌ ERROR:', error.message);
     console.error('Stack:', error.stack);
     
     if (browser) {
@@ -640,8 +782,9 @@ async function registerAllscale() {
 }
 
 // ===== JALANKAN BOT =====
-console.log('🤖 AllScale Auto Register Bot - Enhanced Version');
-console.log('🛡️ With Advanced Cloudflare Turnstile Bypass\n');
+console.log('🤖 AllScale Auto Register Bot - Ultimate Version');
+console.log('🛡️ With Multiple Email Providers & Enhanced Bypass');
+console.log('📧 Supported: Mail.tm, TempMail.lol, GuerrillaMail, 10MinuteMail, TempMail.plus, Mohmal\n');
 
 registerAllscale().catch(error => {
   console.error('\n💥 Bot failed:', error.message);
