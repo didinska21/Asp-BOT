@@ -180,24 +180,47 @@ async function registerAllscale() {
 
     // Cari dan klik tombol "Login with Email" (bukan "Login with Passkey")
     console.log('🔍 Mencari tombol Login with Email...');
-    await delay(1000);
+    await delay(2000);
     
-    const loginButton = await page.evaluateHandle(() => {
-      const buttons = Array.from(document.querySelectorAll('button'));
-      return buttons.find(btn => 
-        btn.textContent.toLowerCase().includes('login with email') ||
-        btn.textContent.toLowerCase().includes('continue with email') ||
-        btn.textContent.toLowerCase().includes('continue')
-      );
-    });
-
-    if (loginButton) {
-      await loginButton.click();
-      console.log('✅ Tombol login diklik');
-    } else {
-      // Fallback: cari form submit
+    // Screenshot sebelum klik
+    await page.screenshot({ path: 'step2b-before-click.png' });
+    
+    // Coba beberapa cara untuk klik tombol
+    let buttonClicked = false;
+    
+    // Cara 1: Cari tombol dengan text
+    try {
+      const clicked = await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button, [role="button"], a'));
+        const targetBtn = buttons.find(btn => {
+          const text = btn.textContent.toLowerCase();
+          return text.includes('login with email') ||
+                 text.includes('continue with email') ||
+                 text.includes('send') ||
+                 text.includes('continue') ||
+                 text.includes('submit');
+        });
+        
+        if (targetBtn) {
+          targetBtn.click();
+          return true;
+        }
+        return false;
+      });
+      
+      if (clicked) {
+        buttonClicked = true;
+        console.log('✅ Tombol diklik (method 1)');
+      }
+    } catch (e) {
+      console.log('⚠️ Method 1 gagal:', e.message);
+    }
+    
+    // Cara 2: Tekan Enter
+    if (!buttonClicked) {
       await page.keyboard.press('Enter');
-      console.log('⚠️ Menggunakan Enter sebagai fallback');
+      buttonClicked = true;
+      console.log('✅ Menggunakan Enter (method 2)');
     }
 
     await delay(3000);
@@ -207,32 +230,52 @@ async function registerAllscale() {
     console.log('📬 Menunggu OTP dari email...');
     let otp = null;
     let attempts = 0;
-    const maxAttempts = 30; // 30 detik
+    const maxAttempts = 40; // Perpanjang menjadi 40 detik
 
     while (!otp && attempts < maxAttempts) {
-      await delay(2000);
+      await delay(3000); // Perpanjang delay menjadi 3 detik
       attempts++;
       
-      const emails = await emailClient.checkEmail();
-      console.log(`📨 Cek email attempt ${attempts}/${maxAttempts}...`);
-      
-      if (emails && emails.length > 0) {
-        // Cari email dengan OTP
-        for (const mail of emails) {
-          const body = mail.mail_body || mail.mail_excerpt || '';
-          // Regex untuk mencari 6 digit OTP
-          const otpMatch = body.match(/\b(\d{6})\b/);
-          
-          if (otpMatch) {
-            otp = otpMatch[1];
-            console.log(`✅ OTP ditemukan: ${otp}`);
-            break;
+      try {
+        const emails = await emailClient.checkEmail();
+        console.log(`📨 Cek email attempt ${attempts}/${maxAttempts}... (${emails.length} email ditemukan)`);
+        
+        if (emails && emails.length > 0) {
+          // Debug: tampilkan semua email
+          for (const mail of emails) {
+            console.log(`   📧 From: ${mail.mail_from}, Subject: ${mail.mail_subject}`);
+            
+            const body = mail.mail_body || mail.mail_excerpt || '';
+            console.log(`   📄 Body preview: ${body.substring(0, 100)}...`);
+            
+            // Coba berbagai pattern OTP
+            const patterns = [
+              /\b(\d{6})\b/,                    // 6 digit
+              /code.*?(\d{6})/i,                // "code: 123456"
+              /otp.*?(\d{6})/i,                 // "OTP: 123456"
+              /verification.*?(\d{6})/i,        // "verification code: 123456"
+              /(\d{3}[\s-]?\d{3})/,             // "123-456" atau "123 456"
+            ];
+            
+            for (const pattern of patterns) {
+              const otpMatch = body.match(pattern);
+              if (otpMatch) {
+                otp = otpMatch[1].replace(/[\s-]/g, ''); // Hapus spasi/dash
+                console.log(`✅ OTP ditemukan: ${otp}`);
+                break;
+              }
+            }
+            
+            if (otp) break;
           }
         }
+      } catch (emailError) {
+        console.log(`⚠️ Error checking email: ${emailError.message}`);
       }
     }
 
     if (!otp) {
+      console.log('❌ OTP tidak ditemukan. Cek screenshot untuk debug.');
       throw new Error('OTP tidak ditemukan dalam waktu yang ditentukan');
     }
 
