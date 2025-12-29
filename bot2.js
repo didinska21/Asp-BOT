@@ -1,4 +1,4 @@
-// bot.js - Ultimate Version with Multiple Email Providers
+// bot2.js - FIXED VERSION with Sticky Proxy Support
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { config } from 'dotenv';
@@ -6,7 +6,6 @@ import axios from 'axios';
 
 config();
 
-// force puppeteer not download chromium
 process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
 
 puppeteer.use(StealthPlugin());
@@ -18,7 +17,6 @@ const randomDelay = (min, max) =>
 // ===== ENHANCED STEALTH FUNCTIONS =====
 async function setupEnhancedStealth(page) {
   await page.evaluateOnNewDocument(() => {
-    // webdriver removal (proto-level, chrome-safe)
     delete navigator.__proto__.webdriver;
 
     Object.defineProperty(navigator, 'plugins', {
@@ -29,9 +27,7 @@ async function setupEnhancedStealth(page) {
       get: () => ['en-US', 'en'],
     });
 
-    window.chrome = {
-      runtime: {},
-    };
+    window.chrome = { runtime: {} };
 
     const originalQuery = window.navigator.permissions.query;
     window.navigator.permissions.query = (parameters) => (
@@ -61,7 +57,6 @@ async function humanMouseMove(page) {
 // 1. Mail.tm
 async function createMailTmClient() {
   const baseURL = 'https://api.mail.tm';
-
   const randomString = Math.random().toString(36).substring(2, 10);
 
   const domainsRes = await axios.get(`${baseURL}/domains`);
@@ -166,6 +161,7 @@ async function createGuerrillaMailClient() {
     }
   };
 }
+
 // 4. 10MinuteMail
 async function create10MinuteMailClient() {
   const baseURL = 'https://10minutemail.net';
@@ -194,7 +190,6 @@ async function create10MinuteMailClient() {
 // 5. TempMail.plus
 async function createTempMailPlusClient() {
   const baseURL = 'https://tempmail.plus/api/mails';
-
   const randomString = Math.random().toString(36).substring(2, 10);
   const email = `${randomString}@tempmail.plus`;
 
@@ -217,7 +212,6 @@ async function createTempMailPlusClient() {
 // 6. Mohmal
 async function createMohmalClient() {
   const baseURL = 'https://www.mohmal.com/en/api';
-
   const randomString = Math.random().toString(36).substring(2, 10);
 
   await axios.post(`${baseURL}/inbox/create`, {
@@ -242,7 +236,7 @@ async function createMohmalClient() {
   };
 }
 
-// ===== EMAIL PROVIDER MANAGER (CASCADE FALLBACK) =====
+// ===== EMAIL PROVIDER MANAGER =====
 async function createEmailClient() {
   const providers = [
     { name: 'Mail.tm', fn: createMailTmClient },
@@ -265,6 +259,142 @@ async function createEmailClient() {
   }
 
   throw new Error('Semua email provider gagal');
+}
+
+// ===== ENHANCED PROXY HANDLER WITH STICKY SESSION =====
+function parseProxy(proxyString) {
+  if (!proxyString || proxyString.trim() === '') {
+    return null;
+  }
+
+  try {
+    const hasAuth = proxyString.includes('@');
+
+    if (hasAuth) {
+      const [auth, hostPort] = proxyString.split('@');
+      let [username, password] = auth.split(':');
+      const [hostname, port] = hostPort.split(':');
+
+      if (!hostname || !port) {
+        throw new Error('Invalid proxy format');
+      }
+
+      // 🔥 STICKY SESSION AUTO-DETECTION & GENERATION
+      const needsSticky = username.toLowerCase().includes('session') || 
+                         username.toLowerCase().includes('sticky');
+      
+      let sessionId = null;
+      
+      // Jika username sudah punya format session
+      if (username.includes('-session-')) {
+        const parts = username.split('-session-');
+        sessionId = parts[1] || Math.random().toString(36).substring(2, 10);
+      } 
+      // Jika perlu sticky tapi belum ada session ID
+      else if (needsSticky) {
+        sessionId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+        username = `${username}-session-${sessionId}`;
+      }
+
+      const isSticky = needsSticky || sessionId !== null;
+
+      if (isSticky) {
+        console.log(`🔒 Sticky proxy detected`);
+        console.log(`   Session ID: ${sessionId}`);
+      }
+
+      return {
+        server: `${hostname}:${port}`,
+        username,
+        password,
+        isSticky,
+        sessionId,
+        rawString: `${username}:${password}@${hostname}:${port}`
+      };
+    } else {
+      const [hostname, port] = proxyString.split(':');
+
+      if (!hostname || !port) {
+        throw new Error('Invalid proxy format');
+      }
+
+      return {
+        server: `${hostname}:${port}`,
+        username: null,
+        password: null,
+        isSticky: false,
+        sessionId: null,
+        rawString: proxyString
+      };
+    }
+  } catch (error) {
+    console.error('❌ Error parsing proxy:', error.message);
+    console.log('💡 Format proxy yang benar:');
+    console.log('   - Rotating: user:pass@hostname:port');
+    console.log('   - Sticky (auto): user-session:pass@hostname:port');
+    console.log('   - Sticky (manual): user-session-abc123:pass@hostname:port');
+    console.log('   - Provider format: follow your provider docs');
+    return null;
+  }
+}
+
+// ===== PROXY CONSISTENCY TEST =====
+async function testProxyConsistency(page, proxyConfig) {
+  if (!proxyConfig) {
+    console.log('ℹ️ Skip proxy test (no proxy configured)');
+    return true;
+  }
+
+  console.log('🧪 Testing proxy consistency...');
+  
+  const ips = [];
+  const testUrl = 'https://api.ipify.org?format=json';
+  
+  for (let i = 0; i < 3; i++) {
+    try {
+      await page.goto(testUrl, { 
+        waitUntil: 'networkidle2',
+        timeout: 15000 
+      });
+      
+      const ipData = await page.evaluate(() => {
+        try {
+          return JSON.parse(document.body.innerText);
+        } catch {
+          return { ip: 'parse-error' };
+        }
+      });
+      
+      if (ipData.ip && ipData.ip !== 'parse-error') {
+        ips.push(ipData.ip);
+        console.log(`   Test ${i+1}/3: ${ipData.ip}`);
+      }
+      
+      await delay(2000);
+    } catch (err) {
+      console.log(`   Test ${i+1}/3: Failed (${err.message})`);
+    }
+  }
+  
+  if (ips.length === 0) {
+    console.log('⚠️ Proxy test gagal - tidak bisa detect IP');
+    return false;
+  }
+  
+  const uniqueIPs = [...new Set(ips)];
+  const isConsistent = uniqueIPs.length === 1;
+  
+  if (isConsistent) {
+    console.log(`✅ Proxy CONSISTENT: ${ips[0]}`);
+    console.log(`   Type: ${proxyConfig.isSticky ? 'STICKY' : 'STATIC'}`);
+    return true;
+  } else {
+    console.log('⚠️ WARNING: Proxy ROTATING detected!');
+    console.log(`   IPs found: ${uniqueIPs.join(', ')}`);
+    console.log('   Cloudflare bypass kemungkinan GAGAL');
+    console.log('   Gunakan sticky/static proxy untuk success rate tinggi');
+    return false;
+  }
 }
 
 // ===== CLOUDFLARE BYPASS =====
@@ -348,50 +478,6 @@ async function waitForTurnstileComplete(page, timeout = 180000) {
   console.log('⚠️ Turnstile timeout');
   return false;
 }
-// ===== PROXY HANDLER =====
-function parseProxy(proxyString) {
-  if (!proxyString || proxyString.trim() === '') {
-    return null;
-  }
-
-  try {
-    const hasAuth = proxyString.includes('@');
-
-    if (hasAuth) {
-      const [auth, hostPort] = proxyString.split('@');
-      const [username, password] = auth.split(':');
-      const [hostname, port] = hostPort.split(':');
-
-      if (!hostname || !port) {
-        throw new Error('Invalid proxy format');
-      }
-
-      return {
-        server: `${hostname}:${port}`,
-        username,
-        password
-      };
-    } else {
-      const [hostname, port] = proxyString.split(':');
-
-      if (!hostname || !port) {
-        throw new Error('Invalid proxy format');
-      }
-
-      return {
-        server: `${hostname}:${port}`,
-        username: null,
-        password: null
-      };
-    }
-  } catch (error) {
-    console.error('❌ Error parsing proxy:', error.message);
-    console.log('💡 Format proxy yang benar:');
-    console.log('   - Dengan auth: user:pass@hostname:port');
-    console.log('   - Tanpa auth: hostname:port');
-    return null;
-  }
-}
 
 // ===== ENHANCED OTP DETECTION =====
 function extractOTP(text) {
@@ -453,10 +539,29 @@ async function registerAllscale() {
       email = emailClient.email;
     }
 
-    // ===== PROXY =====
+    // ===== PROXY PARSING =====
     const proxyConfig = parseProxy(proxyString);
 
-    // ===== LAUNCH OPTIONS (GOOGLE CHROME) =====
+    if (proxyConfig) {
+      console.log('🌐 Proxy Configuration:');
+      console.log(`   Server: ${proxyConfig.server}`);
+      console.log(`   Type: ${proxyConfig.isSticky ? '🔒 STICKY' : '🔄 ROTATING/STATIC'}`);
+      if (proxyConfig.sessionId) {
+        console.log(`   Session: ${proxyConfig.sessionId}`);
+      }
+      
+      if (!proxyConfig.isSticky) {
+        console.log('');
+        console.log('⚠️  WARNING: Proxy tidak sticky!');
+        console.log('   Cloudflare Turnstile mungkin gagal');
+        console.log('   Recommendation: gunakan sticky proxy');
+        console.log('');
+      }
+    } else {
+      console.log('ℹ️ Tidak menggunakan proxy');
+    }
+
+    // ===== LAUNCH OPTIONS =====
     const launchOptions = {
       headless: 'new',
       executablePath: '/usr/bin/google-chrome',
@@ -477,13 +582,10 @@ async function registerAllscale() {
 
     if (proxyConfig) {
       launchOptions.args.push(`--proxy-server=${proxyConfig.server}`);
-      console.log(`🌐 Menggunakan proxy: ${proxyConfig.server}`);
-    } else {
-      console.log('ℹ️ Tidak menggunakan proxy');
     }
 
     // ===== LAUNCH BROWSER =====
-    console.log('🚀 Meluncurkan browser (Google Chrome)...');
+    console.log('🚀 Meluncurkan browser...');
     browser = await puppeteer.launch(launchOptions);
     const page = await browser.newPage();
 
@@ -495,18 +597,27 @@ async function registerAllscale() {
       console.log('✅ Proxy authentication berhasil');
     }
 
-    // ===== STEALTH =====
+    // ===== STEALTH SETUP =====
     await setupEnhancedStealth(page);
-
     await page.setViewport({ width: 1280, height: 800 });
     await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
     );
-
     await page.setExtraHTTPHeaders({
       'Accept-Language': 'en-US,en;q=0.9',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
     });
+
+    // ===== PROXY CONSISTENCY TEST =====
+    const proxyOK = await testProxyConsistency(page, proxyConfig);
+    
+    if (!proxyOK && proxyConfig && !proxyConfig.isSticky) {
+      console.log('');
+      console.log('⏸️  Proxy rotating terdeteksi!');
+      console.log('   Lanjut dalam 5 detik... (Ctrl+C untuk cancel)');
+      console.log('');
+      await delay(5000);
+    }
 
     // ===== OPEN REGISTER PAGE =====
     const registerUrl = `https://app.allscale.io/pay/register?code=${referralCode}`;
@@ -519,7 +630,6 @@ async function registerAllscale() {
 
     await waitForCloudflareBypass(page);
     await randomDelay(2000, 4000);
-
     await humanMouseMove(page);
     await page.screenshot({ path: 'step1-loaded.png' });
 
@@ -622,7 +732,8 @@ async function registerAllscale() {
     console.log('⏳ Menunggu email OTP (15 detik)...');
     await delay(15000);
     await page.screenshot({ path: 'step4-post-turnstile.png' });
-// ===== VERIFY PAGE CHECK =====
+
+    // ===== VERIFY PAGE CHECK =====
     const isVerificationPage = await page.evaluate(() => {
       const text = document.body.innerText.toLowerCase();
       return (
@@ -636,6 +747,14 @@ async function registerAllscale() {
       console.log('⚠️ Belum sampai halaman verifikasi');
       console.log(`📧 Email: ${email}`);
       console.log(`🔧 Provider: ${emailClient.provider}`);
+      
+      if (proxyConfig && !proxyConfig.isSticky) {
+        console.log('');
+        console.log('💡 KEMUNGKINAN PENYEBAB:');
+        console.log('   ❌ Proxy rotating - IP berubah saat Turnstile');
+        console.log('   ✅ Solusi: gunakan sticky/static proxy');
+      }
+      
       throw new Error('Gagal sampai halaman verifikasi OTP');
     }
 
@@ -647,7 +766,7 @@ async function registerAllscale() {
     console.log('📬 Menunggu OTP dari email (max 5 menit)...');
     let otp = null;
     let attempts = 0;
-    const maxAttempts = 100; // 5 menit
+    const maxAttempts = 100;
 
     while (!otp && attempts < maxAttempts) {
       await delay(3000);
@@ -765,6 +884,9 @@ async function registerAllscale() {
       console.log(`📧 Email: ${email}`);
       console.log(`🔧 Provider: ${emailClient.provider}`);
       console.log(`🔗 Referral Code: ${referralCode}`);
+      if (proxyConfig) {
+        console.log(`🌐 Proxy: ${proxyConfig.server} (${proxyConfig.isSticky ? 'STICKY' : 'STATIC'})`);
+      }
     } else {
       console.log('⚠️ Status tidak pasti, cek screenshot step6-final.png');
     }
@@ -793,11 +915,10 @@ async function registerAllscale() {
 }
 
 // ===== RUN BOT =====
-console.log('🤖 AllScale Auto Register Bot - GOOGLE CHROME STABLE');
-console.log('🛡️ Proxy + Stealth + Multi Email');
-console.log(
-  '📧 Providers: Mail.tm, TempMail.lol, GuerrillaMail, 10MinuteMail, TempMail.plus, Mohmal\n'
-);
+console.log('🤖 AllScale Auto Register Bot v2.0 - STICKY PROXY EDITION');
+console.log('🛡️ Enhanced: Proxy Test + Stealth + Multi Email');
+console.log('📧 Providers: Mail.tm, TempMail.lol, GuerrillaMail, 10MinuteMail, TempMail.plus, Mohmal');
+console.log('🔒 Sticky Proxy: AUTO-DETECT & SESSION MANAGEMENT\n');
 
 registerAllscale().catch(error => {
   console.error('\n💥 Bot failed:', error.message);
