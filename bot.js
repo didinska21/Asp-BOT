@@ -159,8 +159,8 @@ async function registerAllscale() {
 
     // Browser options
     const launchOptions = {
-      headless: 'new', // Gunakan 'new' untuk headless mode modern
-      executablePath: '/usr/bin/chromium-browser', // Path yang sudah ditemukan
+      headless: 'new',
+      executablePath: '/usr/bin/chromium-browser',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -234,169 +234,162 @@ async function registerAllscale() {
     await delay(1000);
     await page.screenshot({ path: 'step2-email-filled.png' });
 
-    // CEK DAN CENTANG CHECKBOX TERMS/PRIVACY jika ada
-    console.log('🔍 Mencari checkbox terms/privacy...');
-    try {
-      const checkboxChecked = await page.evaluate(() => {
-        // Cari checkbox untuk terms, privacy, agreement
-        const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
-        let checked = false;
+    // CEK DAN CENTANG CHECKBOX TERMS/PRIVACY
+    console.log('🔍 Mencari dan centang checkbox...');
+    const checkboxFound = await page.evaluate(() => {
+      const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
+      let found = false;
+      
+      for (const cb of checkboxes) {
+        const parent = cb.closest('label') || cb.parentElement;
+        const text = parent?.textContent.toLowerCase() || '';
         
-        for (const cb of checkboxes) {
-          const label = cb.closest('label')?.textContent.toLowerCase() || 
-                       cb.parentElement?.textContent.toLowerCase() || '';
-          
-          if (label.includes('agree') || label.includes('terms') || 
-              label.includes('privacy') || label.includes('policy')) {
-            if (!cb.checked) {
-              cb.click();
-              checked = true;
-              console.log('Checkbox dicentang:', label.substring(0, 50));
-            }
+        console.log('Checkbox found:', text.substring(0, 100));
+        
+        if (text.includes('agree') || text.includes('terms') || 
+            text.includes('privacy') || text.includes('policy')) {
+          if (!cb.checked) {
+            cb.click();
+            found = true;
+            console.log('✓ Checkbox clicked');
           }
         }
-        return checked;
+      }
+      return found;
+    });
+    
+    if (checkboxFound) {
+      console.log('✅ Checkbox terms dicentang');
+      await delay(1500);
+      await page.screenshot({ path: 'step2b-checkbox.png' });
+    } else {
+      console.log('⚠️ Checkbox tidak ditemukan atau sudah tercentang');
+    }
+
+    // DEBUGGING: Cek semua button yang ada
+    console.log('🔍 Mencari semua button di halaman...');
+    const buttons = await page.evaluate(() => {
+      const allButtons = Array.from(document.querySelectorAll('button, [role="button"]'));
+      return allButtons.map((btn, idx) => ({
+        index: idx,
+        text: btn.textContent.trim().substring(0, 50),
+        disabled: btn.disabled,
+        visible: btn.offsetParent !== null,
+        className: btn.className
+      }));
+    });
+    
+    console.log('📋 Buttons ditemukan:');
+    buttons.forEach(btn => {
+      console.log(`   [${btn.index}] "${btn.text}" - disabled:${btn.disabled}, visible:${btn.visible}`);
+    });
+
+    // Cari button "Create with Email" yang BUKAN disabled
+    console.log('🎯 Mencari button "Create with Email"...');
+    const buttonClicked = await page.evaluate(() => {
+      const allButtons = Array.from(document.querySelectorAll('button, [role="button"]'));
+      
+      for (const btn of allButtons) {
+        const text = btn.textContent.toLowerCase().trim();
+        
+        // Debug setiap button
+        console.log(`Checking button: "${text.substring(0, 30)}", disabled: ${btn.disabled}`);
+        
+        if (text.includes('create with email') || 
+            (text.includes('create') && text.includes('email'))) {
+          
+          if (btn.disabled) {
+            console.log('Button found but DISABLED:', text);
+            return false;
+          }
+          
+          console.log('Clicking button:', text);
+          btn.click();
+          return true;
+        }
+      }
+      return false;
+    });
+    
+    if (buttonClicked) {
+      console.log('✅ Button "Create with Email" diklik!');
+    } else {
+      console.log('⚠️ Button DISABLED atau tidak ditemukan!');
+      console.log('💡 Kemungkinan: Email belum valid atau checkbox belum dicentang');
+    }
+
+    await delay(3000);
+    await page.screenshot({ path: 'step3-after-click.png' });
+
+    // Cek perubahan halaman dengan lebih detail
+    console.log('🔍 Mengecek perubahan halaman...');
+    const currentUrl = page.url();
+    const pageContent = await page.evaluate(() => document.body.innerText);
+    
+    console.log(`📍 Current URL: ${currentUrl}`);
+    console.log('📄 Page keywords:', {
+      hasRegister: pageContent.includes('Create your account'),
+      hasVerification: pageContent.includes('verification') || pageContent.includes('Verification'),
+      hasCode: pageContent.includes('code') || pageContent.includes('Code'),
+      hasOTP: pageContent.includes('OTP') || pageContent.includes('otp'),
+      hasEmail: pageContent.includes('Check your email')
+    });
+
+    // Jika halaman tidak berubah, coba click dengan cara lain
+    if (pageContent.includes('Create your account') && !pageContent.includes('verification')) {
+      console.log('⚠️ Halaman masih di register form!');
+      console.log('🔄 Mencoba metode alternatif...');
+      
+      // Method alternatif: Scroll dan tunggu button enabled
+      await page.evaluate(() => window.scrollBy(0, 300));
+      await delay(2000);
+      
+      // Coba lagi dengan force click
+      const forceClicked = await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        for (const btn of buttons) {
+          const text = btn.textContent.toLowerCase();
+          if (text.includes('email') && !text.includes('passkey')) {
+            // Force click bahkan jika disabled
+            btn.disabled = false;
+            btn.click();
+            
+            // Trigger events manually
+            btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            return true;
+          }
+        }
+        return false;
       });
       
-      if (checkboxChecked) {
-        console.log('✅ Checkbox terms berhasil dicentang');
-        await delay(1000);
-        await page.screenshot({ path: 'step2b-checkbox-checked.png' });
+      if (forceClicked) {
+        console.log('✅ Force click berhasil');
+        await delay(3000);
       }
-    } catch (e) {
-      console.log('⚠️ Tidak ada checkbox atau error:', e.message);
     }
 
-    // Cari dan klik tombol "Create with Email"
-    console.log('🔍 Mencari tombol submit...');
-    await delay(1500);
-    
-    let submitted = false;
-    
-    // METHOD 1: Tekan Enter di input email
-    try {
-      console.log('📤 Mencoba submit dengan Enter key...');
-      await emailInput.press('Enter');
-      await delay(3000);
-      
-      // Cek apakah halaman berubah
-      const pageText = await page.evaluate(() => document.body.innerText);
-      if (!pageText.includes('Create with Email') || pageText.includes('verification') || pageText.includes('code')) {
-        submitted = true;
-        console.log('✅ Form submitted dengan Enter key');
-      }
-    } catch (e) {
-      console.log('⚠️ Enter key tidak berhasil:', e.message);
-    }
-    
-    // METHOD 2: Klik tombol "Create with Email"
-    if (!submitted) {
-      console.log('🔍 Mencoba klik tombol "Create with Email"...');
-      await page.screenshot({ path: 'step2c-before-click.png' });
-      
-      try {
-        submitted = await page.evaluate(() => {
-          const buttons = Array.from(document.querySelectorAll('button, [role="button"], a'));
-          
-          // Cari tombol dengan teks "Create with Email" atau "Continue"
-          for (const btn of buttons) {
-            const text = btn.textContent.toLowerCase().trim();
-            
-            // Pastikan bukan tombol passkey
-            if ((text.includes('create') && text.includes('email')) || 
-                (text === 'continue' && !text.includes('passkey'))) {
-              
-              // Cek apakah button disabled
-              if (btn.disabled || btn.hasAttribute('disabled')) {
-                continue;
-              }
-              
-              btn.click();
-              return true;
-            }
-          }
-          return false;
-        });
-        
-        if (submitted) {
-          console.log('✅ Tombol "Create with Email" diklik');
-          await delay(3000);
-        }
-      } catch (e) {
-        console.log('⚠️ Error klik button:', e.message);
-      }
-    }
-    
-    // METHOD 3: Klik tombol submit/continue apapun yang ada
-    if (!submitted) {
-      console.log('🔍 Mencoba klik tombol submit apapun...');
-      try {
-        submitted = await page.evaluate(() => {
-          const buttons = Array.from(document.querySelectorAll('button:not([disabled])'));
-          
-          for (const btn of buttons) {
-            const text = btn.textContent.toLowerCase();
-            if (text.includes('submit') || text.includes('continue') || 
-                text.includes('next') || text.includes('send')) {
-              btn.click();
-              return true;
-            }
-          }
-          return false;
-        });
-        
-        if (submitted) {
-          console.log('✅ Tombol submit diklik (fallback)');
-          await delay(3000);
-        }
-      } catch (e) {
-        console.log('⚠️ Fallback gagal:', e.message);
-      }
-    }
-    
-    await delay(2000);
-    await page.screenshot({ path: 'step3-after-submit.png' });
-    
-    // Cek status halaman
-    console.log('⏳ Mengecek status halaman...');
-    await delay(2000);
-    
-    const pageText = await page.evaluate(() => document.body.innerText);
-    console.log('📄 Page text:', pageText.substring(0, 300));
-    
-    // Cek apakah ada indikasi OTP diminta
-    if (pageText.toLowerCase().includes('verification') || 
-        pageText.toLowerCase().includes('code') ||
-        pageText.toLowerCase().includes('otp') ||
-        page.url() !== registerUrl) {
-      console.log('✅ Halaman berubah, menunggu OTP...');
-    } else {
-      console.log('⚠️ Halaman belum berubah, mungkin ada error');
-      await page.screenshot({ path: 'step3b-status-unclear.png' });
-    }
+    await page.screenshot({ path: 'step4-final-state.png' });
 
-    // Tunggu OTP dikirim dan ambil dari email
+    // Tunggu OTP dari email
     console.log('📬 Menunggu OTP dari email...');
     let otp = null;
     let attempts = 0;
-    const maxAttempts = 40; // Perpanjang menjadi 40 detik
+    const maxAttempts = 40;
 
     while (!otp && attempts < maxAttempts) {
-      await delay(3000); // Perpanjang delay menjadi 3 detik
+      await delay(3000);
       attempts++;
       
       try {
         const emails = await emailClient.checkEmail();
-        console.log(`📨 Cek email attempt ${attempts}/${maxAttempts}... (${emails.length} email ditemukan)`);
+        console.log(`📨 Cek email attempt ${attempts}/${maxAttempts}... (${emails.length} email)`);
         
         if (emails && emails.length > 0) {
-          // Debug: tampilkan semua email
           for (const mail of emails) {
-            const from = mail.from?.address || mail.from || mail.sender || 'unknown';
+            const from = mail.from?.address || mail.from || 'unknown';
             const subject = mail.subject || mail.title || 'no subject';
             console.log(`   📧 From: ${from}, Subject: ${subject}`);
             
-            // Get full email body
             let body = '';
             if (mail.id) {
               try {
@@ -409,21 +402,20 @@ async function registerAllscale() {
               body = mail.text || mail.intro || mail.body || '';
             }
             
-            console.log(`   📄 Body preview: ${body.substring(0, 150)}...`);
+            console.log(`   📄 Body: ${body.substring(0, 150)}...`);
             
-            // Coba berbagai pattern OTP
             const patterns = [
-              /\b(\d{6})\b/,                    // 6 digit
-              /code.*?(\d{6})/i,                // "code: 123456"
-              /otp.*?(\d{6})/i,                 // "OTP: 123456"
-              /verification.*?(\d{6})/i,        // "verification code: 123456"
-              /(\d{3}[\s-]?\d{3})/,             // "123-456" atau "123 456"
+              /\b(\d{6})\b/,
+              /code.*?(\d{6})/i,
+              /otp.*?(\d{6})/i,
+              /verification.*?(\d{6})/i,
+              /(\d{3}[\s-]?\d{3})/,
             ];
             
             for (const pattern of patterns) {
               const otpMatch = body.match(pattern);
               if (otpMatch) {
-                otp = otpMatch[1].replace(/[\s-]/g, ''); // Hapus spasi/dash
+                otp = otpMatch[1].replace(/[\s-]/g, '');
                 console.log(`✅ OTP ditemukan: ${otp}`);
                 break;
               }
@@ -433,27 +425,29 @@ async function registerAllscale() {
           }
         }
       } catch (emailError) {
-        console.log(`⚠️ Error checking email: ${emailError.message}`);
+        console.log(`⚠️ Error: ${emailError.message}`);
       }
     }
 
     if (!otp) {
-      console.log('❌ OTP tidak ditemukan. Cek screenshot untuk debug.');
-      throw new Error('OTP tidak ditemukan dalam waktu yang ditentukan');
+      console.log('❌ OTP tidak ditemukan.');
+      console.log('💡 Kemungkinan penyebab:');
+      console.log('   1. Button submit DISABLED karena validasi gagal');
+      console.log('   2. Email tidak valid untuk website ini');
+      console.log('   3. Checkbox terms belum tercentang dengan benar');
+      console.log('📸 Cek screenshot step4-final-state.png untuk detail');
+      throw new Error('OTP tidak ditemukan - form mungkin belum ter-submit');
     }
 
     // Input OTP
     console.log('🔢 Memasukkan OTP...');
     await delay(2000);
     
-    // Cari input OTP (bisa single input atau multiple)
     const otpInputs = await page.$$('input[type="text"], input[type="number"]');
     
     if (otpInputs.length === 1) {
-      // Single input
       await otpInputs[0].type(otp, { delay: 100 });
     } else if (otpInputs.length >= 6) {
-      // Multiple inputs (satu digit per input)
       for (let i = 0; i < 6; i++) {
         await otpInputs[i].type(otp[i], { delay: 100 });
       }
@@ -462,9 +456,9 @@ async function registerAllscale() {
     }
 
     await delay(2000);
-    await page.screenshot({ path: 'step4-otp-filled.png' });
+    await page.screenshot({ path: 'step5-otp-filled.png' });
 
-    // Submit OTP (biasanya auto-submit atau ada tombol verify)
+    // Submit OTP
     const verifyButton = await page.evaluateHandle(() => {
       const buttons = Array.from(document.querySelectorAll('button'));
       return buttons.find(btn => 
@@ -479,10 +473,10 @@ async function registerAllscale() {
       console.log('✅ OTP submitted');
     }
 
-    // Tunggu redirect atau konfirmasi sukses
+    // Tunggu konfirmasi
     console.log('⏳ Menunggu konfirmasi...');
     await delay(5000);
-    await page.screenshot({ path: 'step5-final.png' });
+    await page.screenshot({ path: 'step6-final.png' });
 
     const finalUrl = page.url();
     console.log(`📍 URL final: ${finalUrl}`);
@@ -491,7 +485,7 @@ async function registerAllscale() {
       console.log('🎉 Registrasi berhasil!');
       console.log(`📧 Email: ${email}`);
     } else {
-      console.log('⚠️ Status tidak pasti, silakan cek screenshot');
+      console.log('⚠️ Status tidak pasti, cek screenshot');
     }
 
     await delay(3000);
