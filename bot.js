@@ -11,95 +11,88 @@ puppeteer.use(StealthPlugin());
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // ===== TEMP MAIL CLIENTS =====
-// Gunakan TempMail.org sebagai alternatif
-async function createTempMailClient() {
-  const baseURL = 'https://www.1secmail.com/api/v1/';
+// Mail.tm - Reliable temp mail service
+async function createMailTmClient() {
+  const baseURL = 'https://api.mail.tm';
   
   // Generate random email
-  const response = await axios.get(baseURL, {
-    params: {
-      action: 'genRandomMailbox',
-      count: 1
-    }
+  const randomString = Math.random().toString(36).substring(2, 10);
+  
+  // Get available domains
+  const domainsRes = await axios.get(`${baseURL}/domains`);
+  const domain = domainsRes.data['hydra:member'][0].domain;
+  
+  const email = `${randomString}@${domain}`;
+  const password = Math.random().toString(36).substring(2, 15);
+  
+  // Create account
+  await axios.post(`${baseURL}/accounts`, {
+    address: email,
+    password: password
   });
-
-  const email = response.data[0];
-  const [login, domain] = email.split('@');
-
+  
+  // Get token
+  const tokenRes = await axios.post(`${baseURL}/token`, {
+    address: email,
+    password: password
+  });
+  
+  const token = tokenRes.data.token;
+  
   return {
     email,
-    login,
-    domain,
+    token,
+    baseURL,
     
     async checkEmail() {
-      const res = await axios.get(baseURL, {
-        params: {
-          action: 'getMessages',
-          login: login,
-          domain: domain
-        }
-      });
-      
-      return res.data || [];
+      try {
+        const res = await axios.get(`${baseURL}/messages`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        return res.data['hydra:member'] || [];
+      } catch (e) {
+        return [];
+      }
     },
-
+    
     async getEmailBody(emailId) {
-      const res = await axios.get(baseURL, {
-        params: {
-          action: 'readMessage',
-          login: login,
-          domain: domain,
-          id: emailId
+      const res = await axios.get(`${baseURL}/messages/${emailId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
         }
       });
-      
       return res.data;
     }
   };
 }
 
-// Guerrilla Mail sebagai backup
-async function createGuerrillaMailClient() {
-  const baseURL = 'https://api.guerrillamail.com/ajax.php';
+// TempMail.lol - Simple fallback
+async function createTempMailLolClient() {
+  const baseURL = 'https://api.tempmail.lol';
   
-  // Get email address
-  const response = await axios.get(baseURL, {
-    params: {
-      f: 'get_email_address',
-      ip: '127.0.0.1',
-      agent: 'Mozilla'
+  // Generate inbox
+  const response = await axios.post(`${baseURL}/generate/rush`, {}, {
+    headers: {
+      'Content-Type': 'application/json'
     }
   });
 
-  const email = response.data.email_addr;
-  const sid = response.data.sid_token;
+  const email = response.data.address;
+  const token = response.data.token;
 
   return {
     email,
-    sid,
+    token,
     
     async checkEmail() {
-      const res = await axios.get(baseURL, {
-        params: {
-          f: 'check_email',
-          sid_token: sid,
-          seq: 0
-        }
-      });
-      
-      return res.data.list || [];
-    },
-
-    async getEmail(emailId) {
-      const res = await axios.get(baseURL, {
-        params: {
-          f: 'fetch_email',
-          sid_token: sid,
-          email_id: emailId
-        }
-      });
-      
-      return res.data;
+      try {
+        const res = await axios.get(`${baseURL}/auth/${token}`);
+        return res.data.email || [];
+      } catch (e) {
+        return [];
+      }
     }
   };
 }
@@ -143,11 +136,26 @@ async function registerAllscale() {
   let emailClient;
 
   try {
-    // Setup Temp Mail (lebih reliable dari Guerrilla)
+    // Setup Temp Mail dengan fallback
     console.log('📧 Setup email temporary...');
-    emailClient = await createTempMailClient();
-    const email = emailClient.email;
-    console.log(`✅ Email generated: ${email}`);
+    let emailClient;
+    let email;
+    
+    try {
+      console.log('⏳ Mencoba Mail.tm...');
+      emailClient = await createMailTmClient();
+      email = emailClient.email;
+      console.log(`✅ Email generated (Mail.tm): ${email}`);
+    } catch (e) {
+      console.log('⚠️ Mail.tm gagal, mencoba TempMail.lol...');
+      try {
+        emailClient = await createTempMailLolClient();
+        email = emailClient.email;
+        console.log(`✅ Email generated (TempMail.lol): ${email}`);
+      } catch (e2) {
+        throw new Error('Semua email provider gagal');
+      }
+    }
 
     // Browser options
     const launchOptions = {
@@ -302,15 +310,21 @@ async function registerAllscale() {
         if (emails && emails.length > 0) {
           // Debug: tampilkan semua email
           for (const mail of emails) {
-            console.log(`   📧 From: ${mail.from || mail.mail_from}, Subject: ${mail.subject || mail.mail_subject}`);
+            const from = mail.from?.address || mail.from || mail.sender || 'unknown';
+            const subject = mail.subject || mail.title || 'no subject';
+            console.log(`   📧 From: ${from}, Subject: ${subject}`);
             
-            // Get full email body untuk 1secmail
+            // Get full email body
             let body = '';
             if (mail.id) {
-              const fullMail = await emailClient.getEmailBody(mail.id);
-              body = fullMail.textBody || fullMail.body || fullMail.htmlBody || '';
+              try {
+                const fullMail = await emailClient.getEmailBody(mail.id);
+                body = fullMail.text || fullMail.intro || fullMail.body || fullMail.html || '';
+              } catch (e) {
+                body = mail.intro || mail.text || '';
+              }
             } else {
-              body = mail.mail_body || mail.mail_excerpt || '';
+              body = mail.text || mail.intro || mail.body || '';
             }
             
             console.log(`   📄 Body preview: ${body.substring(0, 150)}...`);
